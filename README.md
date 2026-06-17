@@ -3,7 +3,7 @@ Update on estimation of global human biomass
 
 Height_NCDRiSC.Rmd cleans the height data from NCD-RisC and outputs meanheight_2022.rds. 
 
-twohalfnorms_results_newmid_rules_modeshift_2022_31Oct_pivotprior_pluslimit_plusnormal_updatedpriors.RDS is the dataset with the posterior estimates by age-sex-country group from the Bayesian multinomial model with split-normal distribution for the BMI distribution (see for more details: ).
+twohalfnorms_results_newmid_rules_modeshift_2022_31Oct_pivotprior_pluslimit_plusnormal_updatedpriors.RDS is the dataset with the posterior estimates by age-sex-country group from the Bayesian multinomial model with split-normal distribution for the BMI distribution (see for more details: https://github.com/IsobelLandray/Modelling_BMI/tree/main).
 
 DATASET_cleaning.Rmd then cleans the BMI data and height data from NCD-RisC and merges with UN population data to output df_bmipopheight_2022_18plus.csv which is the main dataset used for the analysis. 
 
