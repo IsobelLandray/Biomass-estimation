@@ -1,0 +1,83 @@
+---
+title: "Height modelling"
+author: "Isobel Landray"
+date: "2025-10-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+```
+
+#Load newest height data: - this dataset will be needed for contributing 22 to 56 year olds:
+
+```{r}
+ncdrisc_height <- read_csv("~/OneDrive/Documents/UAH/Weightofnations/Data sources/Height/NCD_RisC_Lancet_2020_height_child_adolescent_country.csv")
+
+
+###
+country_lookup <- tribble(
+  ~UN_name,                                ~BMI_name,
+  "Cape Verde",                            "Cabo Verde",
+  "C\x99te d'Ivoire",                         "Cote d'Ivoire",
+  "Czech Republic", "Czechia",
+  "Dem. People's Republic of Korea",       "North Korea",
+  "Democratic Republic of the Congo",      "DR Congo",
+  "Guinea-Bissau",                         "Guinea Bissau",
+  "Iran (Islamic Republic of)",            "Iran",
+  "Lao People's Democratic Republic",      "Lao PDR",
+  "Libyan Arab Jamahiriya",                "Libya",
+  "Micronesia (Fed. States of)",           "Federated States of Micronesia",
+  "Republic of Korea",                     "South Korea",
+  "Republic of Moldova",                   "Moldova",
+  "TFYR Macedonia",                        "North Macedonia",
+  "United Republic of Tanzania",           "Tanzania",
+  "Venezuela (Bolivarian Republic of)",    "Venezuela",
+  "Turkey", "Turkiye",
+  "Swaziland", "Eswatini"
+)
+ncdris_height2 <- ncdrisc_height %>%
+  left_join(country_lookup, by = c("Country" = "BMI_name")) %>%
+  mutate(Country = if_else(!is.na(UN_name), UN_name, `Country`)) %>%
+  select(-UN_name)
+
+ncdris_height3 <- ncdris_height2 %>% filter(`Age group`==19)
+
+ncdris_height3$Age_2022<-2022-ncdris_height3$Year+19
+
+summary(ncdris_height3$Age_2022) #we have the age of people between 22 and 56 years old 
+summary(ncdris_height3$Year) #years between 1985 and 2019
+
+ncdris_height3$Country <- iconv(ncdris_height3$Country, from = "", to = "UTF-8", sub = "?")
+
+young_rows <- ncdris_height3 %>%
+  filter(Age_2022 == 22) %>%
+  slice(rep(1:n(), each = 4)) %>%  
+  mutate(Age_2022 = rep(18:21, times = nrow(ncdris_height3 %>% filter(Age_2022 == 22))))
+
+old_rows <- ncdris_height3 %>%
+  filter(Age_2022 == 56) %>%
+  slice(rep(1:n(), each = 44)) %>%  
+  mutate(Age_2022 = rep(57:100, times = nrow(ncdris_height3 %>% filter(Age_2022 == 56))))
+
+ncdris_height4 <- bind_rows(ncdris_height3, young_rows, old_rows)
+ncdris_height4$Year_IL<-2022-ncdris_height4$Age_2022+19
+summary(ncdris_height4$Year_IL) #to 2023 as those who are 19 in 2023 were 18 in 2022 and we say they had the same height
+summary(ncdris_height4$Age_2022)
+```
+
+```{r}
+saveRDS(ncdris_height4, "~/OneDrive/Documents/UAH/Weightofnations/Code/Code_analysis2022/Output/meanheight_2022.rds")
+```
+
+
+
+
+

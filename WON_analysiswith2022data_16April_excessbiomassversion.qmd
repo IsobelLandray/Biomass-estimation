@@ -568,7 +568,7 @@ dta_2022_namesupdated <- dta_2022 %>%
   dplyr::select(-Worldmap)
 ```
 
-#### Figure 3:
+#### Figure 2:
 
 ```{r}
 #Data for Population & biomass plots
@@ -670,7 +670,7 @@ print(p1)
 dev.off()
 ```
 
-#### Figure 4: Chloropleths
+#### Figure 3: Chloropleths
 
 ```{r}
 #Current excess
@@ -745,7 +745,7 @@ dev.off()
 
 ### Bar charts
 
-#### Figure 5: Change in biomass under optimal and worst case scenarios BY REGION & WB STATUS
+#### Figure 4: Change in biomass under optimal and worst case scenarios BY REGION & WB STATUS
 
 ```{r}
 merged2<-DF_ADULT_bayesmod_japan %>% full_join(DF_ADULT_bayesmod_USA)
