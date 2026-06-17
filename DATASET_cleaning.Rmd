@@ -1,0 +1,632 @@
+---
+title: "Dataset cleaning and merging - 2022"
+author: "Isobel Landray"
+date: "2025-09-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(haven)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(readxl)
+library(readr)
+library(data.table)
+library(tibble)
+```
+The most recent BMI data is from 2022 so this is the year we use for populations too (for height we just use the data from the last paper and assume it hasn't changed v much).
+
+Height (using same data for SD as old paper as newer data has countries missing or ages missing): 
+```{r}
+dfheight_men<-read.table(file="~/OneDrive/Documents/UAH/Weightofnations/Code/2012 code and data/hmen.txt", header=T,sep=",")
+dfheight_women<-read.table(file="~/OneDrive/Documents/UAH/Weightofnations/Code/2012 code and data/hwomen.txt", header=T,sep=",")
+
+#the age groups are: 15-29, 30-44, 45-59, 60-69, 70-79, 80-100
+
+dfheight_SE<-rbind(dfheight_men,dfheight_women)
+dfheight_SE<-dfheight_SE %>% mutate(SEX = ifelse(sexn==1,1,0)) %>% select(-c(bmime,bmisd)) #in the end I will only need height SD rather than height mean
+
+dfheight_SE$agef<-if_else(dfheight_SE$agef==15,18,dfheight_SE$agef)
+
+dfheight_SE <- dfheight_SE %>% select(-hgt)
+
+country_lookup2 <- tribble(
+  ~UN_name,                                ~Height_name,
+  "C\x99te d'Ivoire",                         "Cote d'Ivoire",
+  "C\x99te d'Ivoire",                         "C?te d'Ivoire",
+  "Dem. People's Republic of Korea",       "Democratic People's Republic of Korea",
+  "Timor-Leste",                           "Democratic Republic of Timor-Leste",
+  "Lao People's Democratic Republic",      "Lao People's Democratic Republic of",
+  "Micronesia (Fed. States of)",           "Micronesia, Federated States of",
+  "TFYR Macedonia",                        "The former Yugoslav Republic of Macedonia",
+  "United States of America",              "United States",
+  "Venezuela (Bolivarian Republic of)",    "Venezuela",
+  "TFYR Macedonia",         "Macedonia (TFYR)",
+    "Micronesia (Fed. States of)",           "Micronesia (Federated States of)"
+)
+dfheight_SE2 <- dfheight_SE %>%
+  left_join(country_lookup2, by = c("country" = "Height_name")) %>%
+  mutate(country = if_else(!is.na(UN_name), UN_name, country)) %>%
+  select(-c(UN_name))
+```
+
+
+New height data for mean height:
+```{r}
+dfheight_MEAN<-readRDS("~/OneDrive/Documents/UAH/Weightofnations/Code/Code_analysis2022/Output/meanheight_2022.rds")
+
+dfheight_MEAN2<-dfheight_MEAN %>% select(-c(`Mean height lower 95% uncertainty interval`, `Mean height upper 95% uncertainty interval`, `Mean height standard error`)) %>% mutate(SEX = ifelse(Sex=="Boys",1,0)) 
+
+dfheight_MEAN3 <- dfheight_MEAN2 %>%
+  mutate(
+    agef = case_when(
+      Age_2022 >= 18 & Age_2022 <= 29 ~ 18,
+      Age_2022 >= 30 & Age_2022 <= 44 ~ 30,
+      Age_2022 >= 45 & Age_2022 <= 59 ~ 45,
+      Age_2022 >= 60 & Age_2022 <= 69 ~ 60,
+      Age_2022 >= 70 & Age_2022 <= 79 ~ 70,
+      Age_2022 >= 80 & Age_2022 <= 100 ~ 80
+    ),
+    agel = case_when(
+      Age_2022 >= 18 & Age_2022 <= 29 ~ 29,
+      Age_2022 >= 30 & Age_2022 <= 44 ~ 44,
+      Age_2022 >= 45 & Age_2022 <= 59 ~ 59,
+      Age_2022 >= 60 & Age_2022 <= 69 ~ 69,
+      Age_2022 >= 70 & Age_2022 <= 79 ~ 79,
+      Age_2022 >= 80 & Age_2022 <= 100 ~ 100
+    )
+  )
+
+dfheight_MEAN4 <- dfheight_MEAN3 %>%
+  left_join(country_lookup2, by = c("Country" = "Height_name")) %>%
+  mutate(Country = if_else(!is.na(UN_name), UN_name, Country)) %>%
+  select(-c(UN_name))
+
+levels(as.factor(dfheight_MEAN3$Country))
+levels(as.factor(dfheight_SE2$country))
+
+```
+
+
+Make the two height datasets into one:
+```{r}
+dfheight<-dfheight_MEAN4 %>% left_join(dfheight_SE2,by = c("Country" = "country",
+                   "agef" = "agef",
+                   "agel" = "agel",
+                   "SEX" = "SEX"))
+```
+
+
+
+UN populations:
+```{r, include=FALSE}
+Pop_female<-read_excel("~/OneDrive/Documents/UAH/Weightofnations/Data sources/Population/WPP2024_POP_F01_3_POPULATION_SINGLE_AGE_FEMALE_ILEDIT.xlsx")
+Pop_male<-read_excel("~/OneDrive/Documents/UAH/Weightofnations/Data sources/Population/WPP2024_POP_F01_2_POPULATION_SINGLE_AGE_MALE_ILEDIT.xlsx")
+
+Pop_female_2022 <-Pop_female %>% filter(Year==2022) 
+names(Pop_female_2022)[c(3,8)] <- c("Region, subregion, country or area","SDMX code")
+Pop_female_2022_long <- melt(setDT(Pop_female_2022), id.vars=c("Index", "Variant", "Region, subregion, country or area", "Notes", "Location code", "ISO3 Alpha-code", "ISO2 Alpha-code", "SDMX code", "Type", "Parent code", "Year"), variable.name="Age (years)",value.name="Population (thousands)")
+Pop_female_2022_long$SEX<-0
+Pop_female_2022_long$SEX_CHR<-"FEMALE"
+
+Pop_male_2022 <-Pop_male %>% filter(Year==2022) 
+names(Pop_male_2022)[c(3,8)] <- c("Region, subregion, country or area","SDMX code")
+Pop_male_2022_long <- melt(setDT(Pop_male_2022), id.vars=c("Index", "Variant", "Region, subregion, country or area", "Notes", "Location code", "ISO3 Alpha-code", "ISO2 Alpha-code", "SDMX code", "Type", "Parent code", "Year"), variable.name="Age (years)",value.name="Population (thousands)")
+Pop_male_2022_long$SEX<-1
+Pop_male_2022_long$SEX_CHR<-"MALE"
+
+Pop_ALL_2022 <- rbind(Pop_female_2022_long,Pop_male_2022_long)
+dfUNpop<-Pop_ALL_2022 %>% select(c("Region, subregion, country or area", "Type","Location code","Age (years)", "SEX","SEX_CHR","Population (thousands)"))
+```
+
+BMI (prevalences by category):
+```{r}
+bmi_female_cat <- read_csv("~/OneDrive/Documents/UAH/Weightofnations/Data sources/BMI/CategoricalBMI/NCD_RisC_Lancet_2024_BMI_female_age_specific_country.csv")
+bmi_female_cat_2022 <- bmi_female_cat %>% filter(Year==2022) %>% mutate(sexn=2)
+bmi_female_cat_2022$SEX<-0
+bmi_male_cat <- read_csv("~/OneDrive/Documents/UAH/Weightofnations/Data sources/BMI/CategoricalBMI/NCD_RisC_Lancet_2024_BMI_male_age_specific_country.csv")
+bmi_male_cat_2022 <- bmi_male_cat %>% filter(Year==2022) %>% mutate(sexn=1)
+bmi_male_cat_2022$SEX<-1
+bmi_bothsexes_cat<-rbind(bmi_female_cat_2022,bmi_male_cat_2022)
+
+#As we are no longer looking comparing to 2005 where they used 15+ we are now looking at 18+ !
+
+levels(as.factor(bmi_bothsexes_cat$`Age group`))
+
+bmiagegroups<-c("18-19","20-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60-64","65-69","70-74","75-79","80-84","85plus")
+heightagegroups<-c("18-29","18-29","18-29","30-44","30-44","30-44","45-59","45-59","45-59","60-69","60-69","70-79","70-79","80-100","80-100")
+
+df_agegroups<-data.frame(bmiagegroups,heightagegroups)
+
+BMI_updatedagegrps<-bmi_bothsexes_cat %>% full_join(df_agegroups,by=c("Age group"="bmiagegroups"))
+unique(as.factor(bmi_bothsexes_cat$`Age group`)) 
+
+BMI_updatedagegrps$ageg<-case_when(BMI_updatedagegrps$`heightagegroups`=="18-29" ~ 1,
+                                BMI_updatedagegrps$`heightagegroups`=="30-44" ~ 2,
+                                BMI_updatedagegrps$`heightagegroups`=="45-59" ~ 3,
+                                BMI_updatedagegrps$`heightagegroups`=="60-69" ~ 4,
+                                BMI_updatedagegrps$`heightagegroups`=="70-79" ~ 5,
+                                BMI_updatedagegrps$`heightagegroups`=="80-100" ~ 6)
+
+unique(as.factor(BMI_updatedagegrps$ageg)) 
+
+```
+
+
+
+UN regions: 
+```{r}
+UN_regions <- read_csv("~/OneDrive/Documents/UAH/Weightofnations/Code/2012 code and data/UN-regions.csv")
+UN_regions <- UN_regions %>%
+  mutate(code = if_else(name == "Sudan", 729, code)) 
+```
+
+Before merging, check that all names of countries are the same!
+
+```{r}
+#Names of BMI dataset:
+country_lookup <- tribble(
+  ~UN_name,                                ~BMI_name,
+  "Cape Verde",                            "Cabo Verde",
+  "C\x99te d'Ivoire",                         "Cote d'Ivoire",
+  "Czech Republic", "Czechia",
+  "Dem. People's Republic of Korea",       "North Korea",
+  "Democratic Republic of the Congo",      "DR Congo",
+  "Guinea-Bissau",                         "Guinea Bissau",
+  "Iran (Islamic Republic of)",            "Iran",
+  "Lao People's Democratic Republic",      "Lao PDR",
+  "Libyan Arab Jamahiriya",                "Libya",
+  "Micronesia (Fed. States of)",           "Federated States of Micronesia",
+  "Republic of Korea",                     "South Korea",
+  "Republic of Moldova",                   "Moldova",
+  "TFYR Macedonia",                        "North Macedonia",
+  "United Republic of Tanzania",           "Tanzania",
+  "Venezuela (Bolivarian Republic of)",    "Venezuela",
+  "Turkey", "Turkiye",
+  "Swaziland", "Eswatini"
+)
+dfbmi2 <- BMI_updatedagegrps %>%
+  left_join(country_lookup, by = c("Country/Region/World" = "BMI_name")) %>%
+  mutate(Country = if_else(!is.na(UN_name), UN_name, `Country/Region/World`)) %>%
+  select(-UN_name)
+
+#Nmaes of Height dataset:
+country_lookup2 <- tribble(
+  ~UN_name,                                ~Height_name,
+  "C\x99te d'Ivoire",                         "Cote d'Ivoire",
+  "C\x99te d'Ivoire",                         "C?te d'Ivoire",
+  "Dem. People's Republic of Korea",       "Democratic People's Republic of Korea",
+  "Timor-Leste",                           "Democratic Republic of Timor-Leste",
+  "Lao People's Democratic Republic",      "Lao People's Democratic Republic of",
+  "Micronesia (Fed. States of)",           "Micronesia, Federated States of",
+  "TFYR Macedonia",                        "The former Yugoslav Republic of Macedonia",
+  "United States of America",              "United States",
+  "Venezuela (Bolivarian Republic of)",    "Venezuela",
+    "TFYR Macedonia",         "Macedonia (TFYR)",
+    "Micronesia (Fed. States of)",           "Micronesia (Federated States of)"
+)
+dfheight$country<-dfheight$Country
+dfheight2 <- dfheight %>%
+  left_join(country_lookup2, by = c("country" = "Height_name")) %>%
+  mutate(country = if_else(!is.na(UN_name), UN_name, country)) %>%
+  select(-c(UN_name,Country))
+
+#Names of Population dataset:
+country_lookup3 <- tribble(
+  ~UN_name,                                ~Pop_name,
+  "C\x99te d'Ivoire",                         "Côte d'Ivoire",
+  "Libyan Arab Jamahiriya",                   "Libya",
+  "Micronesia (Fed. States of)",              "Micronesia",
+  "TFYR Macedonia",                           "North Macedonia",
+  "R\x8eunion",                               "Réunion",
+  "Occupied Palestinian Territory",           "State of Palestine"
+)
+dfUNpop2 <- dfUNpop %>%
+  left_join(country_lookup3, by = c("Region, subregion, country or area" = "Pop_name")) %>%
+  mutate(`Region, subregion, country or area` = if_else(!is.na(UN_name), UN_name, `Region, subregion, country or area`)) %>%
+  select(-UN_name)
+
+```
+
+
+Merge UN regions onto BMI, height and population data:
+
+1. Merge UN regions and population data
+```{r}
+#Merge UN regions onto population data:
+Popdf_UNregions<-full_join(UN_regions, dfUNpop2, by=c("code"="Location code"))
+sum(is.na(Popdf_UNregions$`Region, subregion, country or area`)) 
+Popdf_UNregions %>% filter(is.na(Popdf_UNregions$`Region, subregion, country or area`)) 
+#we do not have the populations for the regions: South-Central Asia, Channel Islands, Netherlands Antilles
+
+sum(is.na(Popdf_UNregions$name)) #there are many regions that are in the populations dataset that are NOT in the UN regions list - this is less of a problem as I think we only really need those in the UN regions list and those in the population list are different subsets 
+
+
+```
+
+2. Merge UN regions and BMI data
+```{r}
+#Merge UN regions onto BMI data:
+BMIdf_UNregions<-full_join(UN_regions, dfbmi2, by=c("name"="Country"))
+sum(is.na(BMIdf_UNregions$`Age group`)) 
+BMIdf_UNregions %>% filter(is.na(BMIdf_UNregions$`Age group`)) 
+#we do not have the populations for 42 regions: mostly the "overall" regions but also some countries - these will have to go into a table 1 of excluded countries
+
+sum(is.na(BMIdf_UNregions$name)) #there are NO regions that are in the BMI dataset that are NOT in the UN regions list - i.e we do not have BMI for random "extra" places
+BMIdf_UNregions %>% filter(is.na(BMIdf_UNregions$name)) 
+names(BMIANDPOP)
+```
+
+3. Merge UN regions and height data
+```{r}
+#Merge UN regions onto height data:
+Heightdf_UNregions<-full_join(UN_regions, dfheight2, by=c("name"="country"))
+sum(is.na(Heightdf_UNregions$agel)) 
+Heightdf_UNregions %>% filter(is.na(Heightdf_UNregions$agel)) 
+#we do not have the populations for 46 regions: mostly the "overall" regions but also some countries - these will have to go into a table 1 of excluded countries - I think these will match with those that are NA for BMI but should also check
+
+Heightdf_UNregions %>% filter(is.na(Heightdf_UNregions$agel) & !is.na(Heightdf_UNregions$subregion)) 
+
+sum(is.na(Heightdf_UNregions$name)) #there are NO regions that are in the height dataset that are NOT in the UN regions list - i.e we do not have height for random "extra" places
+Heightdf_UNregions %>% filter(is.na(Heightdf_UNregions$name)) 
+
+```
+
+
+
+EXCLUDED COUNTRIES - TABLE 1:
+```{r}
+excludedcountries<-BMIdf_UNregions %>% filter(is.na(BMIdf_UNregions$`Age group`) &!is.na(BMIdf_UNregions$subregion)) %>% mutate(bmi="miss") %>%select(code,subregion,name,bmi)
+#15 countries without BMI data -> table 1
+excludedcountries_h<-Heightdf_UNregions %>% filter(!is.na(Heightdf_UNregions$subregion) &  is.na(Heightdf_UNregions$hgtsd)) %>% mutate(height="miss") %>%select(code,subregion,name,height) %>% distinct(name, .keep_all=T)
+#19 countries without height data 
+dfUNpop2_bycountry<-dfUNpop2 %>% group_by(`Region, subregion, country or area`) %>% summarise(TOTPOP=sum(as.numeric(`Population (thousands)`))) %>% arrange(desc(TOTPOP))
+table1<-excludedcountries %>% full_join(dfUNpop2_bycountry, by=c("name"="Region, subregion, country or area"))
+table1a<-excludedcountries_h %>% full_join(table1, by=c("name"="name"))
+#there is not even population data for Channel Islands (830) and Netherlands Antilles (530) so for table 1 this is inputted from the following:
+#Channel Islands (830): 163,883 (https://www.macrotrends.net/datasets/global-metrics/countries/chi/channel-islands/population)
+#Netherlands Antilles (530): dissolved in 2010, now is Bonaire, Sint Eustatius and Saba (535) and Sint Maarten (534)
+table1b<-table1a %>% filter(!is.na(subregion.x) | !is.na(subregion.y) | name %in% c("Sint Maarten (Dutch part)", "Bonaire, Sint Eustatius and Saba")) 
+table1b$TOTPOP<-ifelse(!is.na(table1b$code.x) & table1b$code.x==830, 167215,round(table1b$TOTPOP*1000,0))
+table1c<- table1b%>% arrange(desc(TOTPOP)) %>% select(c(name, code.x, TOTPOP)) 
+table1c %>% summarise(totpop_excluded=sum(TOTPOP,na.rm=T))
+
+
+dfUNpop_childadult<-dfUNpop2
+dfUNpop_childadult <- dfUNpop2 %>%
+  mutate(status = case_when(
+    `Age (years)` %in% c("0", "1", "2", "3", "4","5", "6", "7", "8", "9", "10", "11", "12", "13", "14","15","16","17") ~ "remove",
+    TRUE ~ "total"
+  ))
+dfUNpop_childadult<-dfUNpop_childadult %>% filter(status!="remove")
+dfUNpop2_bycountry<-dfUNpop_childadult %>% group_by(`status`,`Region, subregion, country or area`) %>% summarise(TOTPOP=sum(as.numeric(`Population (thousands)`))) %>% arrange(desc(TOTPOP))
+table1<-excludedcountries %>% full_join(dfUNpop2_bycountry, by=c("name"="Region, subregion, country or area"))
+table1a<-excludedcountries_h %>% full_join(table1, by=c("name"="name"))
+#there is not even population data for Channel Islands (830) and Netherlands Antilles (530) so for table 1 this is inputted from the following:
+#Channel Islands (830): 163,883 (https://www.macrotrends.net/datasets/global-metrics/countries/chi/channel-islands/population)
+#Netherlands Antilles (530): dissolved in 2010, now is Bonaire, Sint Eustatius and Saba (535) and Sint Maarten (534)
+table1b<-table1a %>% filter(!is.na(subregion.x) | !is.na(subregion.y) | name %in% c("Sint Maarten (Dutch part)", "Bonaire, Sint Eustatius and Saba")) 
+table1b$TOTPOP<-ifelse(!is.na(table1b$code.x) & table1b$code.x==830, 163883,table1b$TOTPOP*1000)
+table1b<-table1b %>% mutate(status=if_else(code.x==830 & is.na(status),"total",status))
+table1c<- table1b%>% arrange(desc(TOTPOP)) %>% select(c(name, code.x, status, TOTPOP)) 
+table1c %>% summarise(totpop_excluded=sum(TOTPOP,na.rm=T))
+table1_wide<-table1c %>% pivot_wider(id_cols=c(name,code.x),names_from=status,values_from=TOTPOP)
+round_up_half<-function(x){floor(x+0.5)} #R's built in round function rounds to nearest even number when number ends in .5 so have to make my own function here
+table1_FINAL<-table1_wide %>% arrange(desc(total)) %>% select(-`NA`) %>% mutate(total=round_up_half(total))
+table1_FINAL
+
+write.csv(table1_FINAL, "~/OneDrive/Documents/UAH/Weightofnations/Code/Code_analysis2022/Output/Table1_18plus_2022.csv")
+
+#totals row:
+table1_FINAL %>% summarise(TOTAL = sum(total,na.rm=T))
+
+
+
+dfUNpop2_bysubregion<-dfUNpop2 %>% group_by(`Location code`) %>% summarise(TOTPOP=sum(as.numeric(`Population (thousands)`))) %>% arrange(desc(TOTPOP))
+dfUNpop2_bysubregion %>% filter(`Location code`<900) %>% summarise(totpop_subregions =sum(TOTPOP)) #8021407	
+(8021407.1920-8021407) #only difference between world population and sum of subregions populations is due to rounding
+```
+
+
+4. MERGE ALL DATASETS:
+```{r}
+#for BMI (actual categories): 18-19 (which we have assumed represents 15-19 and relabelled as such), 20-24, 25-29, 30-34, 35-39, 40-44, 45-49, 50-54, 55-59, 60-64, 65-69, 70-74, 75-79, 80-84, 85plus
+#for height: the age groups are: 15-29, 30-44, 45-59, 60-69, 70-79, 80-100
+#for population: every age year up to 100+
+
+#MERGE HEIGHT AND POPULATION:
+Heightdf_UNregions <- Heightdf_UNregions %>%
+  filter(!if_all(everything(), is.na)) %>% 
+  mutate(`Age group (IL)`=paste0(agef,"-",agel))
+
+Popdf_UNregions <- Popdf_UNregions %>% 
+  filter(!if_all(everything(), is.na))
+
+Popdf_UNregions$Age_pop<-as.numeric(Popdf_UNregions$`Age (years)`)-1
+
+POPHEIGHT<-Heightdf_UNregions %>% full_join(Popdf_UNregions,by=c("Age_2022"="Age_pop", "SEX", "name"))
+
+POPHEIGHT2<-POPHEIGHT %>% group_by(`Age group (IL)`, SEX, name,code.x) %>% summarise(meanheight=weighted.mean(`Mean height`, as.numeric(`Population (thousands)`),na.rm=T), sdheight=weighted.mean(hgtsd, as.numeric(`Population (thousands)`),na.rm=T))
+
+
+#MERGE POP AND BMI:
+agegroups_lower<-c(0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,20,25,30,35,40,45,50,55,60,65,70,75,80,84)
+agegroups_upper<-c(0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,19,24,29,34,39,44,49,54,59,64,69,74,79,85,105)
+agegroups<-c("0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18-19","20-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60-64","65-69","70-74","75-79","80-84","85plus")
+
+Popdf_UNregions_edit$`Age group (IL2)`<-NA
+for(i in 1:length(agegroups)){
+  Popdf_UNregions_edit<-Popdf_UNregions_edit %>% mutate(`Age group (IL2)` = ifelse(AGE_COMB>=agegroups_lower[i] & AGE_COMB<=agegroups_upper[i],agegroups[i],`Age group (IL2)`))
+}
+
+Popdf_UNregions_edit_readyforBMI<-Popdf_UNregions_edit %>% mutate(`Population (thousands)`=as.numeric(`Population (thousands)`)) %>% group_by(`Age group (IL2)`, SEX, name) %>% summarise(total_population = sum(`Population (thousands)`, na.rm=TRUE),.groups="drop") 
+
+Popdf_UNregions_edit_readyforBMI2 <- Popdf_UNregions_edit_readyforBMI %>% filter(!(`Age group (IL2)` %in% c("0","1","2","3","4"))) #removes rows for 0-4 year olds as we do not have data on BMI for these ages - for 5-14 year olds we have data on BMI and might be able to find height data in the future so we keep these!
+
+Popdf_UNregions_edit_readyforBMI2$`Age group`<-Popdf_UNregions_edit_readyforBMI2$`Age group (IL2)`
+
+#BMI_updatedagegrps_pop<-BMI_updatedagegrps %>% full_join(Popdf_UNregions_edit_grouped,by=c("Country/Region/World"="name","SEX"="SEX","Age group"="Age group (IL)"))
+
+#BMI_categorical<-BMI_updatedagegrps_pop %>% group_by(`Country/Region/World`, SEX,heightagegroups) %>% summarise(prev_less18.5=weighted.mean(`Prevalence of BMI<18.5 kg/m² (underweight)`, total_population,na.rm=T), prev_18.5to20=weighted.mean(`Prevalence of BMI 18.5 kg/m² to <20 kg/m²`, total_population,na.rm=T),  prev_20to25=weighted.mean(`Prevalence of BMI 20 kg/m² to <25 kg/m²`, total_population,na.rm=T), prev_25to30=weighted.mean(`Prevalence of BMI 25 kg/m² to <30 kg/m²`, total_population,na.rm=T), prev_30to35=weighted.mean(`Prevalence of BMI 30 kg/m² to <35 kg/m²`, total_population,na.rm=T), prev_35to40=weighted.mean(`Prevalence of BMI 35 kg/m² to <40 kg/m²`, total_population,na.rm=T), prev_over40=weighted.mean(`Prevalence of BMI >=40 kg/m² (morbid obesity)`, total_population,na.rm=T), TOTPOP=sum(total_population,na.rm=T))
+
+BMIdf_UNregions$`Age group (IL2)`<-BMIdf_UNregions$`Age group`
+
+BMIANDPOP<-BMIdf_UNregions %>% full_join(Popdf_UNregions_edit_readyforBMI2,by=c("Age group (IL2)", "SEX", "name"))
+##
+bmiagegroups<-c("0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18-19","20-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60-64","65-69","70-74","75-79","80-84","85plus")
+heightagegroups<-c("0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18-29","18-29","18-29","30-44","30-44","30-44","45-59","45-59","45-59","60-69","60-69","70-79","70-79","80-100","80-100")
+
+BMIANDPOP2<-BMIANDPOP %>% group_by(heightagegroups, SEX, name) %>% summarise(prev_less18.5=weighted.mean(`Prevalence of BMI<18.5 kg/m² (underweight)`, total_population,na.rm=T), prev_18.5to20=weighted.mean(`Prevalence of BMI 18.5 kg/m² to <20 kg/m²`, total_population,na.rm=T),  prev_20to25=weighted.mean(`Prevalence of BMI 20 kg/m² to <25 kg/m²`, total_population,na.rm=T), prev_25to30=weighted.mean(`Prevalence of BMI 25 kg/m² to <30 kg/m²`, total_population,na.rm=T), prev_30to35=weighted.mean(`Prevalence of BMI 30 kg/m² to <35 kg/m²`, total_population,na.rm=T), prev_35to40=weighted.mean(`Prevalence of BMI 35 kg/m² to <40 kg/m²`, total_population,na.rm=T), prev_over40=weighted.mean(`Prevalence of BMI >=40 kg/m² (morbid obesity)`, total_population,na.rm=T), TOTPOP=sum(total_population,na.rm=T))
+
+#NOW TO MERGE BMIANDPOP and POPHEIGHT:
+BMIANDPOP3 <- BMIANDPOP2 %>% filter(!is.na(heightagegroups))
+BMIANDPOP3$`Age group (IL3)`<-BMIANDPOP3$heightagegroups
+
+POPHEIGHT2$`Age group (IL3)`<-POPHEIGHT2$`Age group (IL)`
+COUNTRIESONLY<-POPHEIGHT2 %>% filter(code.x<900) %>% select("name") 
+UNIQUECOUNTRIESONLY <- unique(COUNTRIESONLY) 
+BMIPOPHEIGHT<-BMIANDPOP3 %>% full_join(POPHEIGHT2,by=c("Age group (IL3)","SEX","name"))
+BMIPOPHEIGHT_countriesonly_pre <- BMIPOPHEIGHT %>% inner_join(UNIQUECOUNTRIESONLY, by=c("name","SEX","Age group (IL)"))
+BMIPOPHEIGHT_countriesonly<-BMIPOPHEIGHT_countriesonly_pre %>% filter(!(`Age group (IL3)` %in% c("0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17")))
+
+#some checks that the merging has worked!
+BMIANDPOP2 %>% filter(is.na(heightagegroups) & name=="Afghanistan" & SEX==0) #6798
+BMIANDPOP %>% filter(is.na(heightagegroups) & name=="Afghanistan" & SEX==0) %>% summarise(sum = sum(total_population)) #just to check that all those excluded were between 0 and 17
+BMIANDPOP %>% filter(name=="Afghanistan" & `Age group (IL2)`=="18-19" & SEX==0) #total pop 877.9045
+dfUNpop %>% filter(`Region, subregion, country or area`=="Afghanistan" & `Age (years)` %in% c(18:19) & SEX==0)
+443+435 #978
+```
+
+
+Add continents to data:
+```{r}
+region_map <- tribble(
+  ~country, ~region,
+  "United States of America", "NORTHERN AM.",
+  "Canada", "NORTHERN AM.",
+  "Mexico", "LATIN AM. CARIBBEAN",
+  "Brazil", "LATIN AM. CARIBBEAN",
+  "Argentina", "LATIN AM. CARIBBEAN",
+  "Colombia", "LATIN AM. CARIBBEAN",
+  "Chile", "LATIN AM. CARIBBEAN",
+  "Peru", "LATIN AM. CARIBBEAN",
+  "Venezuela (Bolivarian Republic of)", "LATIN AM. CARIBBEAN",
+  "Bolivia", "LATIN AM. CARIBBEAN",
+  "Ecuador", "LATIN AM. CARIBBEAN",
+  "Uruguay", "LATIN AM. CARIBBEAN",
+  "Paraguay", "LATIN AM. CARIBBEAN",
+  "Panama", "LATIN AM. CARIBBEAN",
+  "Costa Rica", "LATIN AM. CARIBBEAN",
+  "Guatemala", "LATIN AM. CARIBBEAN",
+  "Honduras", "LATIN AM. CARIBBEAN",
+  "El Salvador", "LATIN AM. CARIBBEAN",
+  "Nicaragua", "LATIN AM. CARIBBEAN",
+  "Cuba", "LATIN AM. CARIBBEAN",
+  "Dominican Republic", "LATIN AM. CARIBBEAN",
+  "Haiti", "LATIN AM. CARIBBEAN",
+  "Jamaica", "LATIN AM. CARIBBEAN",
+  "Bahamas", "LATIN AM. CARIBBEAN",
+  "Barbados", "LATIN AM. CARIBBEAN",
+  "Trinidad and Tobago", "LATIN AM. CARIBBEAN",
+  "Saint Lucia", "LATIN AM. CARIBBEAN",
+  "Saint Vincent and the Grenadines", "LATIN AM. CARIBBEAN",
+  "Grenada", "LATIN AM. CARIBBEAN",
+  "Belize", "LATIN AM. CARIBBEAN",
+  "Guyana", "LATIN AM. CARIBBEAN",
+  "Suriname", "LATIN AM. CARIBBEAN",
+  "China", "ASIA",
+  "India", "ASIA",
+  "Indonesia", "ASIA",
+  "Pakistan", "ASIA",
+  "Bangladesh", "ASIA",
+  "Thailand", "ASIA",
+  "Viet Nam", "ASIA",
+  "Philippines", "ASIA",
+  "Republic of Korea", "ASIA",
+  "Dem. People's Republic of Korea", "ASIA",
+  "Japan", "ASIA",
+  "Iran (Islamic Republic of)", "ASIA",
+  "Iraq", "ASIA",
+  "Afghanistan", "ASIA",
+  "Nepal", "ASIA",
+  "Sri Lanka", "ASIA",
+  "Myanmar", "ASIA",
+  "Cambodia", "ASIA",
+  "Lao People's Democratic Republic", "ASIA",
+  "Timor-Leste", "ASIA",
+  "Uzbekistan", "ASIA",
+  "Kazakhstan", "ASIA",
+  "Kyrgyzstan", "ASIA",
+  "Tajikistan", "ASIA",
+  "Turkmenistan", "ASIA",
+  "Armenia", "ASIA",
+  "Azerbaijan", "ASIA",
+  "Georgia", "ASIA",
+  "Russian Federation", "EUROPE",
+  "Ukraine", "EUROPE",
+  "Poland", "EUROPE",
+  "Germany", "EUROPE",
+  "France", "EUROPE",
+  "United Kingdom", "EUROPE",
+  "Italy", "EUROPE",
+  "Spain", "EUROPE",
+  "Portugal", "EUROPE",
+  "Netherlands", "EUROPE",
+  "Belgium", "EUROPE",
+  "Sweden", "EUROPE",
+  "Norway", "EUROPE",
+  "Denmark", "EUROPE",
+  "Finland", "EUROPE",
+  "Austria", "EUROPE",
+  "Switzerland", "EUROPE",
+  "Ireland", "EUROPE",
+  "Greece", "EUROPE",
+  "Czech Republic", "EUROPE",
+  "Slovakia", "EUROPE",
+  "Hungary", "EUROPE",
+  "Romania", "EUROPE",
+  "Bulgaria", "EUROPE",
+  "Croatia", "EUROPE",
+  "Slovenia", "EUROPE",
+  "Serbia", "EUROPE",
+  "Montenegro", "EUROPE",
+  "TFYR Macedonia", "EUROPE",
+  "Republic of Moldova", "EUROPE",
+  "Bosnia and Herzegovina", "EUROPE",
+  "Albania", "EUROPE",
+  "Lithuania", "EUROPE",
+  "Latvia", "EUROPE",
+  "Estonia", "EUROPE",
+  "Malta", "EUROPE",
+  "Luxembourg", "EUROPE",
+  "Iceland", "EUROPE",
+  "Israel", "ASIA",
+  "Turkey", "EUROPE",
+  "Egypt", "AFRICA",
+  "South Africa", "AFRICA",
+  "Nigeria", "AFRICA",
+  "Kenya", "AFRICA",
+  "Ghana", "AFRICA",
+  "Ethiopia", "AFRICA",
+  "Uganda", "AFRICA",
+  "United Republic of Tanzania", "AFRICA",
+  "Sudan", "AFRICA",
+  "Democratic Republic of the Congo", "AFRICA",
+  "Cameroon", "AFRICA",
+  "Morocco", "AFRICA",
+  "Algeria", "AFRICA",
+  "Tunisia", "AFRICA",
+  "Libyan Arab Jamahiriya", "AFRICA",
+  "Somalia", "AFRICA",
+  "Senegal", "AFRICA",
+  "Mali", "AFRICA",
+  "Burkina Faso", "AFRICA",
+  "Niger", "AFRICA",
+  "Chad", "AFRICA",
+  "Benin", "AFRICA",
+  "Togo", "AFRICA",
+  "Guinea", "AFRICA",
+  "Guinea-Bissau", "AFRICA",
+  "Sierra Leone", "AFRICA",
+  "Liberia", "AFRICA",
+  "C\x99te d'Ivoire", "AFRICA",
+  "Central African Republic", "AFRICA",
+  "Republic of the Congo", "AFRICA",
+  "Gabon", "AFRICA",
+  "Equatorial Guinea", "AFRICA",
+  "Angola", "AFRICA",
+  "Mozambique", "AFRICA",
+  "Zambia", "AFRICA",
+  "Zimbabwe", "AFRICA",
+  "Malawi", "AFRICA",
+  "Madagascar", "AFRICA",
+  "Mauritania", "AFRICA",
+  "Mauritius", "AFRICA",
+  "Lesotho", "AFRICA",
+  "Botswana", "AFRICA",
+  "Cape Verde", "AFRICA",
+  "Comoros", "AFRICA",
+  "Sao Tome and Principe", "AFRICA",
+  "Rwanda", "AFRICA",
+  "Burundi", "AFRICA",
+  "Swaziland", "AFRICA",
+  "Oman", "ASIA",
+  "Qatar", "ASIA",
+  "Saudi Arabia", "ASIA",
+  "United Arab Emirates", "ASIA",
+  "Bahrain", "ASIA",
+  "Lebanon", "ASIA",
+  "Jordan", "ASIA",
+  "Yemen", "ASIA",
+  "Syrian Arab Republic", "ASIA",
+  "Singapore", "ASIA",
+  "Malaysia", "ASIA",
+  "Brunei Darussalam", "ASIA",
+  "Fiji", "OCEANIA",
+  "Papua New Guinea", "OCEANIA",
+  "Solomon Islands", "OCEANIA",
+  "Vanuatu", "OCEANIA",
+  "Samoa", "OCEANIA",
+  "Tonga", "OCEANIA",
+  "Micronesia (Fed. States of)", "OCEANIA",
+  "New Zealand", "OCEANIA",
+  "Australia", "OCEANIA",
+  "Maldives", "ASIA",
+  "Bhutan", "ASIA",
+  "Aruba", "LATIN AM. CARIBBEAN",
+  "Guadeloupe", "LATIN AM. CARIBBEAN",
+  "Martinique", "LATIN AM. CARIBBEAN",
+  "Netherlands Antilles", "LATIN AM. CARIBBEAN",
+  "Puerto Rico", "LATIN AM. CARIBBEAN",
+  "United States Virgin Islands", "LATIN AM. CARIBBEAN",
+  "New Caledonia", "OCEANIA",
+  "Guam", "OCEANIA",
+  "French Polynesia", "OCEANIA",
+  "Occupied Palestinian Territory", "ASIA",
+  "China, Hong Kong SAR", "ASIA",
+  "China, Macao SAR", "ASIA",
+  "Mayotte", "AFRICA",
+  "R\x8eunion", "AFRICA",
+  "Western Sahara", "AFRICA",
+  "Channel Islands", "EUROPE",
+  "Montenergro", "EUROPE",
+  "French Guiana", "LATIN AM. CARIBBEAN",
+  "Namibia", "AFRICA",
+  "Belarus", "EUROPE",
+  "Congo", "AFRICA",
+  "Cyprus", "EUROPE",
+  "Djibouti", "AFRICA",
+  "Eritrea", "AFRICA",
+  "Gambia", "AFRICA",
+  "Kuwait", "AFRICA",
+  "Mongolia","ASIA")
+
+
+BMIPOPHEIGHT_countriesonly_continent<-BMIPOPHEIGHT_countriesonly %>% left_join(region_map,by=c("name"="country")) 
+```
+
+
+
+
+Outputs the merged BMI categorical data (2022), population size (2022), height data (2005) in one dataset:
+```{r}
+write.csv(BMIPOPHEIGHT_countriesonly_continent, "~/OneDrive/Documents/UAH/Weightofnations/Code/Code_analysis2022/Output/df_bmipopheight_2022_18plus.csv", row.names = FALSE)
+```
+
+Notes on this data:
+-BMI data is in categories of prevalences in age-sex-country groups (2022): ages are 18!! upwards (child/adolescent data are only available in SD defined groups rather than pre-defined categories)
+-Population size in age-sex-country groups (2022): all ages available
+-Height SD data in age-sex-country groups (2005): age groups are 15-29 (relabelled as 18-29), ... 
+-Height MEAN data in age-sex-country groups (2022): heights are for all ages as we use years (in terms of time) to back-calc ages
+
+Therefore, for height SD I have merged the 15-29 height group to the 18-29 BMI and height mean group (I have assumed that height SD for 15-19 year olds is representative of BMI for 18-19 year olds!!!) and 18-29 population sizes. 
+
+
+
