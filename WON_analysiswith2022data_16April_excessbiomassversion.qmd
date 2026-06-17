@@ -1,0 +1,1447 @@
+---
+title: "WON_analysiswith2022data_16April_excessbiomassversion"
+format: html
+editor: visual
+---
+
+## WON paper with 2022 data
+
+In this version of the analysis, I focus on "excess biomass" instead of overweight or obesity.
+
+## Load data and packages:
+
+```{r}
+library(readr)
+library(dplyr)
+library(sn)
+library(e1071)
+library(fanplot)
+library(forcats)
+library(ggplot2)
+library(readxl)
+library(tidyr)
+```
+
+```{r}
+#DATA BY AGE-SEX GROUP FOR POP, HEIGHT, BMI IN CATEGORIES
+df_bmipopheight_2022 <- read_csv("Output/df_bmipopheight_2022_18plus.csv")
+#PARAMETER ESTIMATES OF SPLIT-NORMAL DISTRIBUTIONS FOR BMI (BAYESIAN POSTERIOR MEANS)
+bayesmod_hns <- readRDS("~/OneDrive/Documents/UAH/Weightofnations/Bayesian/twohalfnorms_results_newmid_rules_modeshift_2022_31Oct_pivotprior_pluslimit_plusnormal_updatedpriors.RDS")
+
+```
+
+## Preparation of data:
+
+```{r}
+#MERGE THE DATASETS ABOVE:
+DF_ADULT<-df_bmipopheight_2022 
+DF_ADULT_noNA<-DF_ADULT %>% filter(!is.na(`prev_less18.5`))
+bayesmod_hns2<- bayesmod_hns %>% rename(SEX=sex)
+DF_ADULT_bayesmod1<-DF_ADULT_noNA %>% full_join(bayesmod_hns2, by=c("name", "heightagegroups"="agegroup","SEX"))
+DF_ADULT_bayesmod1$total_population<-DF_ADULT_bayesmod1$TOTPOP
+#CALCULATE MEAN BMI IN EACH GROUP:
+DF_ADULT_bayesmod1$BMIMEAN_hns<-DF_ADULT_bayesmod1$pivot+(DF_ADULT_bayesmod1$sigma2-DF_ADULT_bayesmod1$sigma1)*sqrt(2/pi)
+#SET ORDER OF REGION VBL SO THAT IT PRINTS IN AN EASY ORDER TO TRANSFER TO TABLES:
+DF_ADULT_bayesmod2 <- DF_ADULT_bayesmod1 %>%
+  mutate(region = factor(region,
+    levels = c("ASIA",
+               "EUROPE",
+               "AFRICA",
+               "LATIN AM. CARIBBEAN",
+               "NORTHERN AM.",
+               "OCEANIA")
+  ))
+```
+
+## TABLES
+
+### Table 1: Excluded countries
+
+```{r}
+Table1 <- read_csv("Output/Table1_18plus_2022.csv")
+
+Table1 %>% arrange(desc(total))
+
+Table1 %>% summarise(world_popexcluded=sum(total,na.rm=T))
+```
+
+## 
+
+### Table 2: Adult population, body mass and biomass
+
+#### Current
+
+##### Biomass estimates for each age-sex-country group
+
+```{r}
+#BIOMASS ESTIMATE BY AGE-SEX-COUNTRY GROUP:
+DF_ADULT_bayesmod2[,paste(22,"biotot",sep="")] <- DF_ADULT_bayesmod2$total_population*DF_ADULT_bayesmod2$BMIMEAN_hns*((DF_ADULT_bayesmod2$meanheight/100)^2 + (DF_ADULT_bayesmod2$sdheight/100)^2) #see formula under table 1 for E(W)
+
+#FILTER FOR ONLY THOSE AGE-SEX-COUNTRY GROUPS THAT HAVE BIOMASS ESTIMATE:
+DF_ADULT_bayesmod <- DF_ADULT_bayesmod2 %>% filter(!is.na(`22biotot`))
+
+#TOTAL BIOMASS BY COUNTRY
+bm_bycountry<-DF_ADULT_bayesmod %>% group_by(name) %>% summarise(biotot_country_mil=sum(`22biotot`,na.rm=T)/1000)
+```
+
+##### Total biomass, population and avg body mass by WHO region
+
+```{r}
+#BIOMASS, POPULATION AND AVERAGE BODY MASS BY WHO REGION 
+bmpop_region<-DF_ADULT_bayesmod %>% group_by(region) %>% summarise(biotot_region_mil=sum(`22biotot`)/1000, totpop_region_mil=sum(total_population,na.rm=T)/1000)
+bmpop_region$averagebodymass<-bmpop_region$biotot_region_mil/bmpop_region$totpop_region_mil
+bmpop_region
+```
+
+##### Total biomass, population and avg body mass for current WORLD
+
+```{r}
+#BIOMASS, POPULATION AND AVERAGE BODY MASS FOR WORLD
+bmpop_world<-DF_ADULT_bayesmod %>% summarise(biotot_world_mil=sum(`22biotot`,na.rm=T)/1000, totpop_world_mil=sum(total_population,na.rm=T)/1000)
+bmpop_world$averagebodymass<-bmpop_world$biotot_world_mil/bmpop_world$totpop_world_mil
+bmpop_world
+```
+
+#### Optimal scenario (& differences in table 2)
+
+##### Apply BMI distribution of Japan
+
+```{r}
+#JAPAN SCENARIO...
+Japan<-DF_ADULT_bayesmod %>% filter(name=="Japan") %>% select(c(heightagegroups,SEX,BMIMEAN_hns))
+Japan_re<-Japan %>% rename(BMIMEAN_hns_JAPAN=BMIMEAN_hns)
+
+DF_ADULT_bayesmod_japan<-DF_ADULT_bayesmod %>% left_join(Japan_re,by=c("heightagegroups","SEX"))
+```
+
+##### Biomass estimates for each age-sex-country group under S1
+
+```{r}
+#TOTAL BIOMASS BY EACH AGE-SEX-COUNTRY GROUP WITH BMI DIST OF JAPAN
+DF_ADULT_bayesmod_japan[,paste(22,"biotot_JAPAN",sep="")] <- DF_ADULT_bayesmod_japan$total_population*DF_ADULT_bayesmod_japan$BMIMEAN_hns_JAPAN*((DF_ADULT_bayesmod_japan$meanheight/100)^2 + (DF_ADULT_bayesmod_japan$sdheight/100)^2) #see formula under table 1 for E(W)
+```
+
+##### Total biomass and avg body mass by WHO region under S1 - and difference from current world
+
+```{r}
+#BIOMASS AND AVERAGE BODY MASS BY WHO REGION UNDER S1 - AND DIFFERENCE FROM CURRENT
+bmpop_region_japan<-DF_ADULT_bayesmod_japan %>% group_by(region) %>% summarise(biotot_region_japan_mil=sum(`22biotot_JAPAN`,na.rm=T)/1000, totpop_region_japan_mil=sum(total_population,na.rm=T)/1000)
+bmpop_region_japan$averagebodymass_japan<-bmpop_region_japan$biotot_region_japan_mil/bmpop_region_japan$totpop_region_japan_mil
+bmpop_region_japan %>% full_join(bmpop_region, by="region") %>% mutate(pct_savebm = 100-biotot_region_japan_mil/biotot_region_mil*100, pct_saveavg = 100-averagebodymass_japan/averagebodymass*100)
+
+```
+
+##### Total biomass and avg body mass for whole world under S1 - and difference from current world
+
+```{r}
+#BIOMASS AND AVERAGE BODY MASS FOR WORLD UNDER S1 - AND DIFFERENCE FROM CURRENT
+bmpop_world_japan<-DF_ADULT_bayesmod_japan %>% summarise(biotot_world_japan_mil=sum(`22biotot_JAPAN`,na.rm=T)/1000, totpop_world_mil=sum(total_population,na.rm=T)/1000)
+bmpop_world_japan$averagebodymass_japan<-bmpop_world_japan$biotot_world_japan_mil/bmpop_world_japan$totpop_world_mil
+jp<-bmpop_world_japan %>% full_join(bmpop_world, by="totpop_world_mil") %>% mutate(pct_savebm = 100-biotot_world_japan_mil/biotot_world_mil*100, pct_saveavg = 100-averagebodymass_japan/averagebodymass*100)
+jp
+avgadultmass_optimal<-jp$averagebodymass_japan[[1]]
+```
+
+#### Worst-case scenario
+
+##### Apply BMI distribution of USA
+
+```{r}
+#USA SCENARIO...
+USA<-DF_ADULT_bayesmod %>% filter(name=="United States of America") %>% select(c(heightagegroups,SEX,BMIMEAN_hns))
+USA_re<-USA %>% rename(BMIMEAN_hns_USA=BMIMEAN_hns)
+
+DF_ADULT_bayesmod_USA<-DF_ADULT_bayesmod %>% left_join(USA_re,by=c("heightagegroups","SEX"))
+```
+
+##### Biomass estimates for each age-sex-country group under S2
+
+```{r}
+#TOTAL BIOMASS BY EACH AGE-SEX-COUNTRY GROUP WITH BMI DIST OF JAPAN
+DF_ADULT_bayesmod_USA[,paste(22,"biotot_USA",sep="")] <- DF_ADULT_bayesmod_USA$total_population*DF_ADULT_bayesmod_USA$BMIMEAN_hns_USA*((DF_ADULT_bayesmod_USA$meanheight/100)^2 + (DF_ADULT_bayesmod_USA$sdheight/100)^2) #see formula under table 1 for E(W)
+```
+
+##### Total biomass and avg body mass by WHO region under S2 - and difference from current world
+
+```{r}
+#BIOMASS AND AVERAGE BODY MASS BY WHO REGION UNDER S1 - AND DIFFERENCE FROM CURRENT
+bmpop_region_USA<-DF_ADULT_bayesmod_USA %>% group_by(region) %>% summarise(biotot_region_USA_mil=sum(`22biotot_USA`,na.rm=T)/1000, totpop_region_USA_mil=sum(total_population,na.rm=T)/1000)
+bmpop_region_USA$averagebodymass_USA<-bmpop_region_USA$biotot_region_USA_mil/bmpop_region_USA$totpop_region_USA_mil
+bmpop_region_USA %>% full_join(bmpop_region, by="region") %>% mutate(pct_addbm =biotot_region_USA_mil/biotot_region_mil*100-100, pct_addavg = averagebodymass_USA/averagebodymass*100-100)
+
+```
+
+##### Total biomass and avg body mass for whole world under S2 - and difference from current world
+
+```{r}
+#BIOMASS AND AVERAGE BODY MASS FOR WORLD UNDER S1 - AND DIFFERENCE FROM CURRENT
+bmpop_world_USA<-DF_ADULT_bayesmod_USA %>% summarise(biotot_world_USA_mil=sum(`22biotot_USA`,na.rm=T)/1000, totpop_world_mil=sum(total_population,na.rm=T)/1000)
+bmpop_world_USA$averagebodymass_USA<-bmpop_world_USA$biotot_world_USA_mil/bmpop_world_USA$totpop_world_mil
+bmpop_world_USA %>% full_join(bmpop_world, by="totpop_world_mil") %>% mutate(pct_add = biotot_world_USA_mil/biotot_world_mil*100-100, pct_addavg = averagebodymass_USA/averagebodymass*100-100)
+
+avgadultmass_worstcase<-bmpop_world_USA$averagebodymass_USA[[1]]
+```
+
+##### CURRENT EXCESS
+
+```{r}
+bmpop_region_japan %>% full_join(bmpop_region, by="region") %>% mutate(savebm = biotot_region_mil-biotot_region_japan_mil, savebm_adults = savebm*1000/avgadultmass_optimal)
+bmpop_world_japan$world<-"Y"
+bmpop_world$world<-"Y"
+bmpop_world_japan %>% full_join(bmpop_world, by="world") %>% mutate(savebm = biotot_world_mil-biotot_world_japan_mil, savebm_adults = savebm*1000/avgadultmass_optimal)
+```
+
+##### POTENTIAL EXCESS
+
+```{r}
+joint_usjapan<-bmpop_region_USA %>% full_join(bmpop_region_japan, by="region")
+joint_usjapan %>% full_join(bmpop_region, by="region") %>% mutate(savebm = biotot_region_USA_mil-biotot_region_japan_mil, savebm_adults = savebm*1000/avgadultmass_optimal)
+bmpop_world_USA$world<-"Y"
+joint_usjapan_world<-bmpop_world_USA %>% full_join(bmpop_world_japan, by="world")
+joint_usjapan_world %>% full_join(bmpop_world, by="world") %>% mutate(savebm = biotot_world_USA_mil-biotot_world_japan_mil, savebm_adults = savebm*1000/avgadultmass_optimal)
+```
+
+### Table 3: Energy requirements
+
+#### Load TEE coefficients for calculations
+
+```{r}
+TEE_coefficients <- read_excel("~/OneDrive/Documents/UAH/Weightofnations/Code/Code_analysis2022/Output/TEE_coefficients.xlsx")
+```
+
+#### Average tTEE (Kcal/day/adult)
+
+##### Current
+
+###### By region
+
+```{r}
+energy_byregion<-DF_ADULT_bayesmod %>% full_join(TEE_coefficients, by=c("heightagegroups", "SEX")) %>% mutate(energy=(BMR_coeffN*TOTPOP+`22biotot`*BMR_coeffBM)*PAL) %>% group_by(region) %>% summarise(energy_avg = weighted.mean(energy/TOTPOP, TOTPOP))
+energy_byregion
+```
+
+###### Whole world
+
+```{r}
+worldavgenergy<-DF_ADULT_bayesmod %>% full_join(TEE_coefficients, by=c("heightagegroups", "SEX")) %>% mutate(energy=(BMR_coeffN*TOTPOP+`22biotot`*BMR_coeffBM)*PAL) %>% summarise(energy_avg = weighted.mean(energy/TOTPOP, TOTPOP, na.rm=T))
+worldavgenergy$world<-"Y"
+worldavgenergy
+```
+
+##### Optimal scenario & difference
+
+###### By region under S1 & with difference
+
+```{r}
+energy_byregion_japan<-DF_ADULT_bayesmod_japan %>% full_join(TEE_coefficients, by=c("heightagegroups", "SEX")) %>% mutate(energy=(BMR_coeffN*TOTPOP+`22biotot_JAPAN`*BMR_coeffBM)*PAL) %>% group_by(region) %>% summarise(energy_avg_japan = weighted.mean(energy/TOTPOP, TOTPOP, na.rm=T))
+energy_byregion_japan %>% full_join(energy_byregion, by="region") %>% mutate(energyDIFF = energy_avg_japan-energy_avg, energyDIFFPCT = energyDIFF/energy_avg*100)
+```
+
+###### World under S1 & difference
+
+```{r}
+energy_world_japan<-DF_ADULT_bayesmod_japan %>% full_join(TEE_coefficients, by=c("heightagegroups", "SEX")) %>% mutate(energy=(BMR_coeffN*TOTPOP+`22biotot_JAPAN`*BMR_coeffBM)*PAL) %>% summarise(energy_avg_japan = weighted.mean(energy/TOTPOP, TOTPOP, na.rm=T))
+energy_world_japan$world<-"Y"
+s1_energy<-energy_world_japan %>% full_join(worldavgenergy, by="world") %>% mutate(energyDIFF = energy_avg_japan-energy_avg, energyDIFFPCT = energyDIFF/energy_avg*100)
+s1_energy
+#save energy needed to maintain average adult from the optimal scenario:
+avgadultenergy_optimal<-s1_energy$energy_avg_japan[[1]]
+```
+
+##### Worst-case scenario & difference
+
+###### By region under S2 & with difference
+
+```{r}
+energy_byregion_USA<-DF_ADULT_bayesmod_USA %>% full_join(TEE_coefficients, by=c("heightagegroups", "SEX")) %>% mutate(energy=(BMR_coeffN*TOTPOP+`22biotot_USA`*BMR_coeffBM)*PAL) %>% group_by(region) %>% summarise(energy_avg_USA = weighted.mean(energy/TOTPOP, TOTPOP, na.rm=T))
+energy_byregion_USA %>% full_join(energy_byregion, by="region") %>% mutate(energyDIFF = energy_avg_USA-energy_avg, energyDIFFPCT = energyDIFF/energy_avg*100)
+```
+
+###### World under S2 & difference
+
+```{r}
+energy_world_USA<-DF_ADULT_bayesmod_USA %>% full_join(TEE_coefficients, by=c("heightagegroups", "SEX")) %>% mutate(energy=(BMR_coeffN*TOTPOP+`22biotot_USA`*BMR_coeffBM)*PAL) %>% summarise(energy_avg_USA = weighted.mean(energy/TOTPOP, TOTPOP, na.rm=T))
+energy_world_USA$world<-"Y"
+energy_world_USA %>% full_join(worldavgenergy, by="world") %>% mutate(energyDIFF = energy_avg_USA-energy_avg, energyDIFFPCT = energyDIFF/energy_avg*100)
+```
+
+##### 
+
+#### Thousands of adults that could be maintained by energy required to maintain:
+
+##### Current excess
+
+```{r}
+#No. adults (typical of japan scenario) BY REGION
+DF_ADULT_bayesmod_japan %>% full_join(TEE_coefficients, by=c("heightagegroups", "SEX")) %>% mutate(energy=((`22biotot`-`22biotot_JAPAN`)*BMR_coeffBM)*PAL) %>% group_by(region) %>% summarise(energy_diff = sum(energy)/avgadultenergy_optimal)
+#biomass is in thousands so therefore the number of adults is in terms of thousands of adults
+
+#No. adults (typical of japan scenario) WHOLE WORLD
+DF_ADULT_bayesmod_japan %>% full_join(TEE_coefficients, by=c("heightagegroups", "SEX")) %>% mutate(energy=((`22biotot`-`22biotot_JAPAN`)*BMR_coeffBM)*PAL) %>% summarise(energy_diff = sum(energy)/avgadultenergy_optimal)
+#biomass is in thousands so therefore the number of adults is in terms of thousands of adults
+```
+
+##### Potential excess
+
+```{r}
+#join usa and japan data as going to analyse "POTENTIAL EXCESS" (USA-JAPAN SCENARIOS)
+usa<-DF_ADULT_bayesmod_USA %>% dplyr::select(c("name","SEX","heightagegroups","region","22biotot_USA"))
+japan<-DF_ADULT_bayesmod_japan %>% dplyr::select(c("name","SEX","heightagegroups","region","22biotot_JAPAN"))
+
+japan_usa_join<-usa %>% full_join(japan, by=c("name","SEX","heightagegroups","region"))
+
+#No. adults (typical of japan scenario) BY REGION
+japan_usa_join %>% full_join(TEE_coefficients, by=c("heightagegroups", "SEX")) %>% mutate(energy=((`22biotot_USA`-`22biotot_JAPAN`)*BMR_coeffBM)*PAL) %>% group_by(region) %>% summarise(energy_diff = sum(energy)/avgadultenergy_optimal)
+#biomass is in thousands so therefore the number of adults is in terms of thousands of adults
+
+#No. adults (typical of japan scenario) WHOLE WORLD
+japan_usa_join %>% full_join(TEE_coefficients, by=c("heightagegroups", "SEX")) %>% mutate(energy=((`22biotot_USA`-`22biotot_JAPAN`)*BMR_coeffBM)*PAL) %>% summarise(energy_diff = sum(energy)/avgadultenergy_optimal)
+#biomass is in thousands so therefore the number of adults is in terms of thousands of adults
+```
+
+### Table 4: CO2 emissions for commercial flights
+
+#### Current
+
+##### CO2 per passenger - REGION
+
+```{r}
+DF_ADULT_bayesmod %>% group_by(region) %>% summarise(biotot_region_mil=sum(`22biotot`,na.rm=T)/1000, totpop_region_mil=sum(total_population,na.rm=T)/1000, avgmass = biotot_region_mil/totpop_region_mil, onepassenger = avgmass*0.0945)
+```
+
+##### CO2 per passenger - WORLD
+
+```{r}
+DF_ADULT_bayesmod %>% summarise(biotot_region_mil=sum(`22biotot`,na.rm=T)/1000, totpop_region_mil=sum(total_population,na.rm=T)/1000, avgmass = biotot_region_mil/totpop_region_mil, onepassenger = avgmass*0.0945)
+```
+
+#### Optimal scenario
+
+##### CO2 per passenger under S1 & differences - REGION
+
+```{r}
+#excess co2 - japan
+underjapan_co2<-DF_ADULT_bayesmod_japan %>% group_by(region) %>% summarise(biomass_underjapanscenario=sum(`22biotot_JAPAN`,na.rm=T)/1000, totpop_region_mil = sum(total_population,na.rm=T)/1000, avgmass_japan = biomass_underjapanscenario/totpop_region_mil, onepassenger_japan = avgmass_japan*0.0945)
+current_co2<-DF_ADULT_bayesmod %>% group_by(region) %>% summarise(biotot_region_mil=sum(`22biotot`,na.rm=T)/1000, totpop_region_mil=sum(total_population,na.rm=T)/1000, avgmass = biotot_region_mil/totpop_region_mil, onepassenger = avgmass*0.0945)
+underjapan_co2 %>% left_join(current_co2, by="region") %>% mutate(diff_passenger = onepassenger_japan-onepassenger, diff_pct_passenger = diff_passenger/onepassenger*100) %>% dplyr::select(c(region, onepassenger_japan,diff_passenger, diff_pct_passenger))
+```
+
+##### CO2 per passenger under S1 & differences - WORLD
+
+```{r}
+#excess co2 - japan
+underjapan_co2_world<-DF_ADULT_bayesmod_japan %>% summarise(biomass_underjapanscenario=sum(`22biotot_JAPAN`,na.rm=T)/1000, totpop_region_mil = sum(total_population,na.rm=T)/1000, avgmass_japan = biomass_underjapanscenario/totpop_region_mil, onepassenger_japan = avgmass_japan*0.0945)
+underjapan_co2_world$world<-"Y"
+current_co2_world<-DF_ADULT_bayesmod %>% summarise(biotot_region_mil=sum(`22biotot`,na.rm=T)/1000, totpop_region_mil=sum(total_population,na.rm=T)/1000, avgmass = biotot_region_mil/totpop_region_mil, onepassenger = avgmass*0.0945)
+current_co2_world$world<-"Y"
+underjapan_co2_world %>% left_join(current_co2_world, by="world") %>% mutate(diff_passenger = onepassenger_japan-onepassenger, diff_pct_passenger = diff_passenger/onepassenger*100) %>% dplyr::select(c(onepassenger_japan,diff_passenger, diff_pct_passenger))
+```
+
+#### Worst-case scenario
+
+##### CO2 per passenger under S2 & differences - REGION
+
+```{r}
+#excess co2 - USA
+underUSA_co2<-DF_ADULT_bayesmod_USA %>% group_by(region) %>% summarise(biomass_underUSAscenario=sum(`22biotot_USA`,na.rm=T)/1000, totpop_region_mil = sum(total_population,na.rm=T)/1000, avgmass_USA = biomass_underUSAscenario/totpop_region_mil, onepassenger_USA = avgmass_USA*0.0945)
+underUSA_co2 %>% left_join(current_co2, by="region") %>% mutate(diff_passenger = onepassenger_USA-onepassenger, diff_pct_passenger = diff_passenger/onepassenger*100) %>% dplyr::select(c(region, onepassenger_USA,diff_passenger, diff_pct_passenger))
+```
+
+##### CO2 per passenger under S2 & differences - WORLD
+
+```{r}
+#excess co2 - japan
+underUSA_co2_world<-DF_ADULT_bayesmod_USA %>% summarise(biomass_underUSAscenario=sum(`22biotot_USA`,na.rm=T)/1000, totpop_region_mil = sum(total_population,na.rm=T)/1000, avgmass_USA = biomass_underUSAscenario/totpop_region_mil, onepassenger_USA = avgmass_USA*0.0945)
+underUSA_co2_world$world<-"Y"
+underUSA_co2_world %>% left_join(current_co2_world, by="world") %>% mutate(diff_passenger = onepassenger_USA-onepassenger, diff_pct_passenger = diff_passenger/onepassenger*100) %>% dplyr::select(c(onepassenger_USA,diff_passenger, diff_pct_passenger))
+```
+
+#### 
+
+## RESULTS IN TEXT
+
+### Section: Biomass estimation for 2022
+
+#### US: Body mass
+
+```{r}
+DF_ADULT_bayesmod %>% filter(name=="United States of America") %>% summarise(avgmass_US=sum(`22biotot`)/sum(TOTPOP))
+```
+
+#### 1 tonne of biomass claculations
+
+```{r}
+DF_ADULT_bayesmod %>% group_by(region) %>% summarise(pplpertonne=1000/(sum(`22biotot`)/sum(TOTPOP)))
+```
+
+### Section: Potential future scenarios
+
+#### Mean BMI in US and Japan
+
+```{r}
+DF_ADULT_bayesmod %>% filter(name %in% c("Japan", "United States of America")) %>% group_by(name) %>% summarise(sum(BMIMEAN_hns)/n())
+
+```
+
+#### Decrease & Increase % in average mass
+
+```{r}
+avgadultmass_worstcase/bmpop_world$averagebodymass[[1]]*100-100
+
+bmpop_world$averagebodymass[[1]]/avgadultmass_optimal*100
+```
+
+#### Excess -regional (comment - as not sure if going to use!)
+
+```{r}
+bmpop_region_japan %>% full_join(bmpop_region, by="region") %>% mutate(pct_savebm = biotot_region_mil/biotot_region_japan_mil*100-100)
+```
+
+#### Increase in human biomass under worst-case scenario compared to current scenario (biomass & number of adults)
+
+```{r}
+bmpop_world_USA %>% full_join(bmpop_world, by="totpop_world_mil") %>% mutate(pctbm_add = biotot_world_USA_mil/biotot_world_mil*100-100, bm_add = biotot_world_USA_mil-biotot_world_mil) %>% dplyr::select(c("pctbm_add","bm_add")) %>% mutate(bm_add/avgadultmass_optimal)
+
+```
+
+#### Increase in human biomass under worst-case scenario compared to optimal scenario (biomass & number of adults)
+
+```{r}
+d3<-bmpop_world_japan %>% full_join(bmpop_world, by="world") %>% mutate(savebm = biotot_world_mil-biotot_world_japan_mil, savebm_adults = savebm*1000/avgadultmass_optimal)
+
+d4<-bmpop_world_USA %>% full_join(bmpop_world_japan, by="totpop_world_mil") %>% mutate(pctbm_add = biotot_world_USA_mil/biotot_world_japan_mil*100-100, bm_add = biotot_world_USA_mil-biotot_world_japan_mil) %>% dplyr::select(c("pctbm_add","bm_add")) %>% mutate(bm_add/avgadultmass_optimal)
+d4
+d4$bm_add[[1]]/d3$savebm[[1]]
+```
+
+#### World pop vs current excess
+
+```{r}
+#population proportions
+globalpop<-sum(bmpop_region_japan$totpop_region_japan_mil)
+bmpop_region_japan %>% group_by(region) %>% summarise(prop_pop = totpop_region_japan_mil/globalpop)
+
+#excess biomass
+bmpop_region_japan %>% full_join(bmpop_region, by="region") %>% mutate(savebm = biotot_region_mil-biotot_region_japan_mil, savebm_pcttot = savebm/sum(savebm))
+
+```
+
+#### Does biomass increase for all countries current vs under optimal case scenario?
+
+```{r}
+dt<-DF_ADULT_bayesmod_japan %>%  group_by(name, region) %>% summarise(biomass_current = sum(`22biotot`), biomass_opt = sum(`22biotot_JAPAN`)) %>% mutate(diff=biomass_current-biomass_opt)
+mean(dt$diff>0)
+sameorless<-dt %>% filter(diff<=0) 
+dt %>% filter(diff<=0) %>% group_by(region) %>% summarise(n=n(), pct = n()/nrow(sameorless))
+```
+
+#### China, USA and India stats under optimal
+
+```{r}
+bmpop_country_japan<-DF_ADULT_bayesmod_japan %>% filter(name %in% c("China","United States of America","India")) %>% group_by(name) %>% summarise(biotot_country_japan_mil=sum(`22biotot_JAPAN`,na.rm=T)/1000, totpop_country_japan_mil=sum(total_population,na.rm=T)/1000)
+bmpop_country<-DF_ADULT_bayesmod %>% filter(name %in% c("China","United States of America","India")) %>% group_by(name) %>% summarise(biotot_country_mil=sum(`22biotot`,na.rm=T)/1000, totpop_country_mil=sum(total_population,na.rm=T)/1000)
+bmpop_country_japan %>% full_join(bmpop_country, by="name") %>% mutate(savebm = biotot_country_mil-biotot_country_japan_mil, savebm_pcttot = savebm/sum(savebm), savebm_avgadults = savebm/avgadultmass_optimal)
+```
+
+#### Which countries have highest proportion of current biomass in excess?
+
+```{r}
+excess_tot<-DF_ADULT_bayesmod_japan %>% summarise(excess = sum(`22biotot`)-sum(`22biotot_JAPAN`))
+DF_ADULT_bayesmod_japan %>% group_by(name) %>% summarise(excess = (sum(`22biotot`)-sum(`22biotot_JAPAN`)), excess_pct = (sum(`22biotot`)-sum(`22biotot_JAPAN`))/sum(`22biotot`)*100) %>% arrange(-excess_pct)
+
+```
+
+#### Which countries have excess biomass greater than 1 million tonnes?
+
+```{r}
+DF_ADULT_bayesmod_japan %>% group_by(name) %>% summarise(excess = (sum(`22biotot`)-sum(`22biotot_JAPAN`))/1000) %>% arrange(-excess)
+```
+
+#### Does biomass decrease for all countries under worst case scenario vs current?
+
+```{r}
+dt2<-DF_ADULT_bayesmod_USA %>%  group_by(name, region) %>% summarise(biomass_current = sum(`22biotot`), biomass_worst = sum(`22biotot_USA`)) %>% mutate(diff=biomass_worst-biomass_current)
+mean(dt2$diff>0)
+```
+
+#### China and India stats under worst case
+
+```{r}
+#vs current
+bmpop_country_USA<-DF_ADULT_bayesmod_USA %>% filter(name %in% c("China","India")) %>% group_by(name) %>% summarise(biotot_country_USA_mil=sum(`22biotot_USA`,na.rm=T)/1000, totpop_country_USA_mil=sum(total_population,na.rm=T)/1000)
+bmpop_country<-DF_ADULT_bayesmod %>% filter(name %in% c("China","India")) %>% group_by(name) %>% summarise(biotot_country_mil=sum(`22biotot`,na.rm=T)/1000, totpop_country_mil=sum(total_population,na.rm=T)/1000)
+bmpop_country_USA %>% full_join(bmpop_country, by="name") %>% mutate(savebm = biotot_country_USA_mil-biotot_country_mil)
+
+#vs optimal
+bmpop_country_USA %>% full_join(bmpop_country_japan, by="name") %>% mutate(savebm = biotot_country_USA_mil-biotot_country_japan_mil)
+
+bmpop_country_USA %>% full_join(bmpop_country_japan, by="name") %>% mutate(savebm_avgadult = (biotot_country_USA_mil-biotot_country_japan_mil)/avgadultmass_optimal)
+```
+
+### Section: Consequences
+
+#### Energy required to maintain excess biomass in US alone
+
+```{r}
+#No. adults (typical of japan scenario) BY REGION
+DF_ADULT_bayesmod_japan %>% full_join(TEE_coefficients, by=c("heightagegroups", "SEX")) %>% mutate(energy=((`22biotot`-`22biotot_JAPAN`)*BMR_coeffBM)*PAL) %>% group_by(name) %>% filter(name=="United States of America") %>% summarise(energy_diff = sum(energy)/avgadultenergy_optimal)
+#biomass is in thousands so therefore the number of adults is in terms of thousands of adults
+```
+
+```         
+```
+
+#### Energy required to sustain worst-case vs current (% and number of adults)
+
+```{r}
+DF_ADULT_bayesmod_USA %>% full_join(TEE_coefficients, by=c("heightagegroups", "SEX")) %>% mutate(energy=((`22biotot_USA`-`22biotot`)*BMR_coeffBM)*PAL) %>% summarise(energy_diff = sum(energy)/avgadultenergy_optimal)
+#biomass is in thousands so therefore the number of adults is in terms of thousands of adults
+
+```
+
+#### Average emissions: % current vs optimal
+
+```{r}
+current_co2_world %>% left_join(underjapan_co2_world, by="world") %>% mutate(diff_passenger = onepassenger-onepassenger_japan, diff_pct_passenger = diff_passenger/onepassenger_japan*100) %>% dplyr::select(c(onepassenger,diff_passenger, diff_pct_passenger))
+```
+
+#### Average emissions: % worst-case vs optimal
+
+```{r}
+underUSA_co2_world %>% left_join(underjapan_co2_world, by="world") %>% mutate(diff_passenger = onepassenger_USA-onepassenger_japan, diff_pct_passenger = diff_passenger/onepassenger_japan*100) %>% dplyr::select(c(onepassenger_USA,diff_passenger, diff_pct_passenger))
+```
+
+### Section: Abstract
+
+#### Commercial flight: North America vs Asia
+
+```{r}
+current_co2[current_co2$region=="NORTHERN AM.","onepassenger"][[1]]/current_co2[current_co2$region=="ASIA","onepassenger"][[1]]
+```
+
+## FIGURES
+
+### Maps
+
+#### Load packages and set up data for maps
+
+```{r}
+library(cartogram) 
+library(sf) 
+library(tmap) 
+library(tibble)
+data("World")
+World<-World[World$continent!="Antarctica",]
+World <- st_transform(World, 3395)
+dta_2022<-DF_ADULT_bayesmod_japan %>% full_join(DF_ADULT_bayesmod_USA)
+country_lookup <- tribble(
+  ~Worldmap,                                ~biomassnames,
+  "Bosnia and Herz.", "Bosnia and Herzegovina", 
+  "Brunei", "Brunei Darussalam",
+  "Central African Rep.", "Central African Republic",
+  "Cote d'Ivoire", "C\x99te d'Ivoire",
+  "Czechia", "Czech Republic",
+  "Dem. Rep. Congo", "Democratic Republic of the Congo",
+  "Dominican Rep.", "Dominican Republic",
+  "Eq. Guinea", "Equatorial Guinea",
+  "Iran", "Iran (Islamic Republic of)",
+  "Laos", "Lao People's Democratic Republic",
+  "Libya", "Libyan Arab Jamahiriya",
+  "Moldova", "Republic of Moldova", 
+  "North Korea", "Dem. People's Republic of Korea",
+  "North Macedonia", "TFYR Macedonia",
+  "Palestine", "Occupied Palestinian Territory",
+  "Russia","Russian Federation",
+  "S. Sudan","Sudan",
+  "Solomon Is.","Solomon Islands",
+  "South Korea","Republic of Korea",
+  "Syria","Syrian Arab Republic",
+  "Tanzania", "United Republic of Tanzania",
+  "Venezuela", "Venezuela (Bolivarian Republic of)",
+  "Vietnam", "Viet Nam",
+  "W. Sahara", "Western Sahara",
+  "eSwatini", "Swaziland"
+)
+dta_2022_namesupdated <- dta_2022 %>%
+  left_join(country_lookup, by = c("name" = "biomassnames")) %>%
+  mutate(name = if_else(!is.na(Worldmap), Worldmap, name)) %>%
+  dplyr::select(-Worldmap)
+```
+
+#### Figure 3:
+
+```{r}
+#Data for Population & biomass plots
+globalbiomass<-sum(dta_2022_namesupdated$`22biotot`)
+globalpop<-sum(dta_2022_namesupdated$TOTPOP)
+biomasstot_country<-dta_2022_namesupdated %>% group_by(name) %>% summarise(biotot_region_pct=sum(`22biotot`,na.rm=T)/globalbiomass*100, totpop_region_mil=sum(total_population,na.rm=T)/1000)
+World_biomasstot<-biomasstot_country %>% full_join(World, by=c("name"))
+World_biomasstot[is.na(World_biomasstot$biotot_region_pct), ]
+World_biomasstot_clean2 <- World_biomasstot %>% filter(!is.na(area))
+World_biomasstot_clean3 <- st_as_sf(World_biomasstot_clean2)
+  
+#Population 
+globalpop<-sum(dta_2022_namesupdated$TOTPOP)
+World_totpop_cont <- cartogram_cont(World_biomasstot_clean3, "totpop_region_mil", itermax = 5)
+tot_pop_plot<-tm_shape(World_totpop_cont) + tm_polygons("totpop_region_mil", style = "jenks", title="Adult pop (millions)") +
+  tm_layout(frame = FALSE, legend.position = c("left", "bottom")) 
+tot_pop_plot
+
+#Current biomass
+World_biomasstot_cont <- cartogram_cont(World_biomasstot_clean3, "biotot_region_pct", itermax = 5)
+tot_biomass_plot<-tm_shape(World_biomasstot_cont) + tm_polygons("biotot_region_pct", style = "jenks", title="% of global biomass") +
+  tm_layout(frame = FALSE, legend.position = c("left", "bottom")) 
+tot_biomass_plot
+
+#Current:optimal ratio
+biomasstot_country_ctoo<-dta_2022_namesupdated %>% group_by(name) %>% summarise(biotot_region_pct_currenttooptratio=sum(`22biotot`,na.rm=T)/sum(`22biotot_JAPAN`,na.rm=T))
+World_biomasstot_ctoo<-biomasstot_country_ctoo %>% full_join(World, by=c("name"))
+World_biomasstot_ctoo[is.na(World_biomasstot_ctoo$biotot_region_pct_currenttooptratio), ]
+World_biomasstot_ctoo_clean2 <- World_biomasstot_ctoo %>% filter(!is.na(area))
+World_biomasstot_ctoo_clean3 <- st_as_sf(World_biomasstot_ctoo_clean2)
+World_biomasstot_ctoo_cont <- cartogram_cont(World_biomasstot_ctoo_clean3, "biotot_region_pct_currenttooptratio", itermax = 5)
+tot_biomass_plot_currenttoopt<-tm_shape(World_biomasstot_ctoo_cont) + tm_polygons("biotot_region_pct_currenttooptratio", style = "jenks", title="Current biomass : Lowest case biomass") +
+  tm_layout(frame = FALSE, legend.position = c("left", "bottom")) 
+tot_biomass_plot_currenttoopt
+
+#Worst-case:current ratio
+biomasstot_country_wctoo<-dta_2022_namesupdated %>% group_by(name) %>% summarise(biotot_region_pct_worsttooptratio=sum(`22biotot_USA`,na.rm=T)/sum(`22biotot`,na.rm=T))
+World_biomasstot_wctoo<-biomasstot_country_wctoo %>% full_join(World, by=c("name"))
+World_biomasstot_wctoo[is.na(World_biomasstot_wctoo$biotot_region_pct_worsttooptratio), ]
+World_biomasstot_wctoo_clean2 <- World_biomasstot_wctoo %>% filter(!is.na(area))
+World_biomasstot_wctoo_clean3 <- st_as_sf(World_biomasstot_wctoo_clean2)
+World_biomasstot_wctoo_cont <- cartogram_cont(World_biomasstot_wctoo_clean3, "biotot_region_pct_worsttooptratio", itermax = 5)
+tot_biomass_plot_worsttoopt<-tm_shape(World_biomasstot_wctoo_cont) + tm_polygons("biotot_region_pct_worsttooptratio", style = "jenks", title="Highest case biomass : Current biomass") +
+  tm_layout(frame = FALSE, legend.position = c("left", "bottom")) 
+tot_biomass_plot_worsttoopt
+
+```
+
+```{r}
+
+###FORMATTING PLOTS FOR OUTPUT
+
+tmap_mode("plot")
+
+# Define layout settings
+common_layout <- list(
+    legend.outside = TRUE,
+    legend.outside.position = "right",
+    legend.text.size = 0.6,
+    legend.title.size = 0.8,
+    legend.bg.color = "white",
+    legend.frame = TRUE,
+    frame = TRUE,
+    inner.margins = c(0, 0, 0, 0),
+    outer.margins = c(0, 0, 0, 0),
+    asp = 0
+)
+
+
+# Create each map using do.call()
+map1 <- tm_shape(World_totpop_cont) +
+    tm_polygons("totpop_region_mil", style = "jenks", title = "Adult population   \n(millions)") +
+    do.call(tm_layout, common_layout)
+
+map2 <- tm_shape(World_biomasstot_cont) +
+    tm_polygons("biotot_region_pct", style = "jenks", title = "% global biomass ") +
+    do.call(tm_layout, common_layout)
+
+map3 <- tm_shape(World_biomasstot_ctoo_cont) +
+    tm_polygons("biotot_region_pct_currenttooptratio", style = "jenks", title = "Current biomass :\nLowest biomass") +
+    do.call(tm_layout, common_layout)
+
+map4 <- tm_shape(World_biomasstot_wctoo_cont) +
+    tm_polygons("biotot_region_pct_worsttooptratio", style = "jenks", title = "Highest     \nbiomass :\nCurrent biomass   ") +
+    do.call(tm_layout, common_layout)
+  
+# Arrange the four maps in a 3x2 grid
+p1<-tmap_arrange(
+    map1, map2, map3, map4,
+    nrow = 2,
+    ncol = 2,
+    outer.margins = 0.02
+)
+
+print(p1)
+
+png("Output/Grid_fourcartograms_jun17.png",width=12,height=6, units = "in", res = 300)
+print(p1)
+dev.off()
+```
+
+#### Figure 4: Chloropleths
+
+```{r}
+#Current excess
+biomassexcessandtot_country<-dta_2022_namesupdated %>% group_by(name) %>% summarise(biomassexcess_country=sum(`22biotot`-`22biotot_JAPAN`,na.rm=T)/1000000, biomasspotentialexcess_country=sum(`22biotot_USA`-`22biotot_JAPAN`,na.rm=T)/1000000)
+biomassexcessandtot_country_namesupdate <- biomassexcessandtot_country %>%
+  left_join(country_lookup, by = c("name" = "biomassnames")) %>%
+  mutate(Country = if_else(!is.na(Worldmap), Worldmap, name)) %>%
+  select(-Worldmap)
+World_biomasstoexcessandtot<-biomassexcessandtot_country_namesupdate %>% full_join(World, by=c("Country"="name"))
+World_biomasstoexcessandtot[is.na(World_biomasstoexcessandtot$biomassexcess_country), ]
+World_biomasstoexcessandtot_clean <- World_biomasstoexcessandtot %>% filter(!is.na(area))
+World_biomasstoexcessandtot_clean2 <- st_as_sf(World_biomasstoexcessandtot_clean)
+
+breaks_shared <- c(-1, -0.5, 0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 10, 15, 20, 25)
+
+biomass_currentexcess_plot<-tm_shape(World_biomasstoexcessandtot_clean2) + tm_polygons("biomassexcess_country", title="Current excess biomass (MT)", breaks=breaks_shared, palette = "-RdYlGn", midpoint=0) + tm_layout(frame = FALSE, legend.position = c("left", "bottom"))
+biomass_currentexcess_plot
+
+#Potential excess
+biomass_potentialexcess_plot<-tm_shape(World_biomasstoexcessandtot_clean2) + tm_polygons("biomasspotentialexcess_country", title="Potential excess biomass (MT)", breaks=breaks_shared, palette = "-RdYlGn", midpoint=0) + tm_layout(frame = FALSE, legend.position = c("left", "bottom"))
+biomass_potentialexcess_plot
+
+
+biomass_currentexcess_plot <- tm_shape(World_biomasstoexcessandtot_clean2) +
+  tm_polygons(
+    "biomassexcess_country",
+    title = "Current excess biomass (MT)",
+    breaks = breaks_shared,
+    palette = "-RdYlGn",
+    midpoint = 0
+  ) +
+  tm_layout(frame = TRUE, legend.show = FALSE)
+
+biomass_potentialexcess_plot <- tm_shape(World_biomasstoexcessandtot_clean2) +
+  tm_polygons(
+    "biomasspotentialexcess_country",
+    title = "Potential excess biomass (MT)",
+    breaks = breaks_shared,
+    palette = "-RdYlGn",
+    midpoint = 0
+  ) +
+  tm_layout(frame = TRUE, legend.show = FALSE)
+
+legend_plot <- tm_shape(World_biomasstoexcessandtot_clean2) +
+  tm_polygons(
+    "biomassexcess_country",
+    breaks = breaks_shared,
+    palette = "-RdYlGn",
+    midpoint = 0,
+    title = "Excess biomass\n(million tonnes)"
+  ) +
+  tm_layout(
+    legend.only = TRUE,
+    legend.position = c("left", "center"),
+    frame = TRUE
+  )
+
+p2<-tmap_arrange(
+  biomass_currentexcess_plot,
+  legend_plot,
+  biomass_potentialexcess_plot,
+  ncol = 2,
+  widths = c(3, 1)
+)
+
+png("Output/Grid_twochloropleths_apr17.png",width=5,height=5, units = "in", res = 300)
+print(p2)
+dev.off()
+
+
+```
+
+### Bar charts
+
+#### Figure 5: Change in biomass under optimal and worst case scenarios BY REGION & WB STATUS
+
+```{r}
+merged2<-DF_ADULT_bayesmod_japan %>% full_join(DF_ADULT_bayesmod_USA)
+library(stringr)
+library(tidyr)
+WBstatus <- read_excel("~/OneDrive/Documents/UAH/Weightofnations/Data sources/WorldBank/OGHIST_2026_03_10_2022dataonly copy_matchnames.xlsx", 
+    sheet = "Country Analytical History")
+WBstatus2<-WBstatus %>% mutate(WB_name=if_else(WB_name=="Cote divoire", "C\x99te d'Ivoire", WB_name))
+
+merged2_clean <- merged2 %>%
+  mutate(name_clean = str_replace_all(name, "\\s+", "") %>% str_to_lower())
+
+WBstatus_clean <- WBstatus2 %>%
+  mutate(WB_name_clean = str_replace_all(WB_name, "\\s+", "") %>% str_to_lower())
+
+merged2_WB<-merged2_clean %>%
+  full_join(WBstatus_clean, by = c("name_clean" = "WB_name_clean"))
+
+data_diff<-merged2_WB %>% filter(!is.na(region)) %>% dplyr::select(region, name, heightagegroups,SEX, TOTPOP, `22biotot`, `22biotot_JAPAN`, `22biotot_USA`, WB_2022)
+data_diff$diff_japan<-data_diff$`22biotot_JAPAN`-data_diff$`22biotot`
+data_diff$diff_USA<-data_diff$`22biotot_USA`-data_diff$`22biotot`
+
+worldbiomass<-merged2 %>% summarise(biomass_world=sum(`22biotot`,na.rm=T)/1000)
+
+figdata_change_region<-data_diff %>% filter(!is.na(region)) %>% group_by(region) %>% summarise(biomassd_japan = sum(diff_japan, na.rm=T)/sum(`22biotot`)*100, biomassd_usa = sum(diff_USA, na.rm=T)/sum(`22biotot`)*100, biomassd_japan_ab = sum(diff_japan, na.rm=T), biomassd_usa_ab = sum(diff_USA, na.rm=T) ) %>% pivot_longer(
+    cols = c(biomassd_japan, biomassd_usa, biomassd_japan_ab, biomassd_usa_ab),
+    names_to = "scenario",
+    values_to = "biomass_change"
+  ) %>% 
+  mutate(
+    scenario = recode(scenario,
+                      biomassd_japan = "Lowest scenario",
+                      biomassd_usa   = "Highest scenario"),
+    WB_2022 = "Overall" 
+  ) 
+
+
+figdata_change_region_WBstatus<-data_diff %>% filter(!is.na(WB_2022) & !is.na(region)) %>% group_by(region, WB_2022) %>% summarise(biomassd_japan = sum(diff_japan, na.rm=T)/sum(`22biotot`)*100, biomassd_usa = sum(diff_USA, na.rm=T)/sum(`22biotot`)*100,  biomassd_japan_ab = sum(diff_japan, na.rm=T), biomassd_usa_ab = sum(diff_USA, na.rm=T)) %>% pivot_longer(
+    cols = c(biomassd_japan, biomassd_usa, biomassd_japan_ab, biomassd_usa_ab),
+    names_to = "scenario",
+    values_to = "biomass_change"
+  ) %>% 
+  mutate(
+    scenario = recode(scenario,
+                      biomassd_japan = "Lowest scenario",
+                      biomassd_usa   = "Highest scenario")
+  ) 
+
+
+figdata_change<-rbind(figdata_change_region,figdata_change_region_WBstatus)
+# country_order <- figdata_change %>%
+#   distinct(name, biomass_pct) %>%
+#   arrange(biomass_pct) %>%
+#   pull(name)
+
+
+
+figdata_change$WB_2022 <- factor(
+  figdata_change$WB_2022,
+  levels = c("Overall", "H", "UM", "LM", "L"),
+  labels = c("Overall", "High", "Upper-middle", "Lower-middle", "Low")
+)
+
+
+
+figdata_change_pct <- figdata_change %>% filter(scenario %in% c(
+    "Lowest scenario",
+    "Highest scenario"
+  ))
+
+
+figdata_change_pct$scenario <- factor(
+  figdata_change_pct$scenario,
+  levels = c(
+    "Lowest scenario",
+    "Highest scenario"
+  )
+)
+
+figdata_change_pct <- figdata_change_pct[order(figdata_change_pct$scenario == "Lowest scenario"), ]
+
+figdata_less<-figdata_change%>% filter(scenario=="biomassd_japan_ab") %>% mutate(vbl = ifelse(biomass_change<0,paste0(sprintf("%.1f", biomass_change / 1000000), " MT"), paste0("+",sprintf("%.1f", biomass_change / 1000000), " MT")))
+figdata_more<-figdata_change%>% filter(scenario=="biomassd_usa_ab") %>% mutate(vbl = paste0("+",sprintf("%.1f", biomass_change / 1000000), " MT"))
+
+
+fig_biomass_change<-ggplot(figdata_change_pct, aes(x=biomass_change, y=WB_2022, fill=as.factor(scenario))) + 
+  facet_wrap(~region)+
+  geom_col(width=0.8, position="identity")+theme_bw()+
+  labs(
+    x = "Change in biomass (%)",
+    y = NULL
+  )+
+  guides(fill = guide_legend(title = NULL,nrow=1,byrow=F))+
+  theme(
+    legend.position = "bottom",
+    legend.background = element_rect(
+      fill = alpha("white", 0.5),  # semi-transparent fill
+      color = "black",             # border color
+      size = 0.8                   # border thickness
+    ),    
+    text = element_text(color = "black"),          # general text
+    axis.text = element_text(color = "black", face="bold"),     # axis tick labels
+    axis.title = element_text(color = "black", face="bold"),    # axis titles
+    plot.subtitle = element_text(color = "black"), # subtitle
+    legend.text = element_text(color = "black", face="bold"),   # legend labels
+    legend.title = element_text(color = "black", face="bold"),   # legend title,
+    strip.text = element_text(face = "bold", size=11),
+    
+  )+
+  scale_fill_manual(values=c("Lowest scenario"="#FFB000", "Highest scenario"="#648FFF")) + 
+  geom_vline(xintercept=0, linetype="dashed", color="gray20") +
+  geom_label(data=figdata_less, aes(x=-max(figdata_change_pct$biomass_change)-10, y=WB_2022, label=vbl), fill="grey90", size=3, color="black") +
+  geom_label(data=figdata_more, aes(x=max(figdata_change_pct$biomass_change)+10, y=WB_2022, label=vbl), fill="grey90", size=3, color="black") +
+  scale_x_continuous(breaks=c(-30,-25,-20,-15,-10,-5,0,5,10,15,20,25,30), labels = c("-30", "", "-20", "", "-10", "", "0", "", "+10", "", "+20", "", "+30"), limits=c(-max(figdata_change_pct$biomass_change)-17, max(figdata_change_pct$biomass_change)+17))
+  
+
+
+
+ggsave("Output/Fig_2022_change_biomass_17Jun.png",
+       plot = fig_biomass_change,
+       width = 10,
+       height = 4,
+       dpi = 300)
+
+data_diff %>% filter(!is.na(WB_2022) & !is.na(region)) %>% filter(heightagegroups=="18-29" & SEX==0) %>% group_by(region, WB_2022) %>% summarise(n())
+
+data_diff %>% filter(!is.na(WB_2022) & !is.na(region)) %>% filter(heightagegroups=="18-29" & SEX==0) %>% group_by(region) %>% summarise(n())
+
+#FOR RESULTS IN TEXT FOR THIS FIGURE
+figdata_change_pct %>% filter(region=="AFRICA")
+figdata_change%>% filter(scenario=="biomassd_usa_ab") %>% filter(region=="AFRICA" & WB_2022 =="High") %>% mutate(biomass_change/1000000)
+```
+
+### Demonstrating message
+
+#### Figure 1: Normal vs split-normal
+
+```{r}
+
+pivot_japan<-22.5
+sigma1_japan<-5
+sigma2_japan<-10
+
+pivot_US<-22.5
+sigma1_US<-5
+sigma2_US<-5
+
+splitvsnormal<-ggplot() +
+  xlim(c(10,50)) +
+  geom_vline(aes(xintercept=22.5), linetype="dotted")+
+  stat_function(
+    fun = function(x) {
+      ifelse(
+        x <= pivot_japan,
+        sqrt(2/pi) / (sigma1_japan + sigma2_japan) * 
+          exp(- (x - pivot_japan)^2 / (2 * sigma1_japan^2)),
+        sqrt(2/pi) / (sigma1_japan + sigma2_japan) * 
+          exp(- (x - pivot_japan)^2 / (2 * sigma2_japan^2))
+      )
+    },
+    color = "#60A561",
+    linewidth = 1.2,
+    n = 500
+  )  +
+  stat_function(
+    fun = function(x) {
+      ifelse(
+        x <= pivot_US,
+        sqrt(2/pi) / (sigma1_US + sigma2_US) * 
+          exp(- (x - pivot_US)^2 / (2 * sigma1_US^2)),
+        sqrt(2/pi) / (sigma1_US + sigma2_US) * 
+          exp(- (x - pivot_US)^2 / (2 * sigma2_US^2))
+      )
+    },
+    color = "#4D7EA8",
+    linewidth = 1.2, 
+    n = 500
+  )  +
+  labs(
+    x = "BMI (kg/m^2)",
+    y = "Density"
+  ) +
+  theme_minimal() +
+  ylim(c(0, 0.09)) 
+
+ggsave("Output/Fig_splitvsnormal_17Apr.png",
+       plot = splitvsnormal,
+       width = 6,
+       height = 3.5,
+       dpi = 300)
+ 
+```
+
+## Supplementary File 2 & Supplementary Figure 1: explaining excess biomass plot
+
+```{r}
+library(truncnorm)
+library(ggplot2)
+
+dta_2022<-readRDS("/Users/issylandray/Library/CloudStorage/OneDrive-Personal/Documents/UAH/Weightofnations/Code/Code_analysis2022/Output/WON_analysis_allvbls_2022_Apr15.rds")
+
+results<-dta_2022 %>% filter(name %in% c("Japan", "United States of America") & heightagegroups =="45-59" & SEX==0)
+
+meanbmi_japan<-20
+sigma1_japan<-5
+
+meanbmi_US<-28
+sigma1_US<-5
+
+xvals<-c(15,20)
+
+qs<-ptruncnorm(xvals, mean = meanbmi_japan,sd = sigma1_japan,a = 10)
+
+japan_q<-qtruncnorm(qs,mean = meanbmi_japan,sd = sigma1_japan,a = 10)
+
+us_q<-qtruncnorm(qs,mean = meanbmi_US,sd = sigma1_US,a = 10)
+
+df_q <- data.frame(
+  q = qs,
+  x_japan = japan_q,
+  x_us = us_q,
+  position = -qs/50
+)
+
+legend_df <- data.frame(
+  group = c("Japan: 30-44 years, male", "US: 30-44 years, male"),
+  x = c(10, 10),
+  y = c(0, 0)
+)
+
+
+#BMI
+
+bmi_plot<-ggplot() +
+  geom_vline(xintercept=25,color="grey30", linetype="dotted") +
+  geom_vline(xintercept=30,color="grey30", linetype="dotted") +
+  xlim(c(10,50)) +
+  stat_function(
+    fun = function(x) dnorm(x, mean = meanbmi_japan, sd = sigma1_japan),
+    color = "#9E1946",
+    linewidth = 1.2,
+    n = 500
+  ) +
+  stat_function(
+    fun = function(x) dnorm(x, mean = meanbmi_US, sd = sigma1_US),
+    color = "#4D6CFA",
+    linewidth = 1.2,
+    n = 500
+  ) +
+  labs(
+    x = "BMI (kg/m^2)",
+    y = "Density"
+  ) +
+  theme_minimal() +
+  geom_point(
+    data = df_q,
+    aes(x = x_japan, y = -0.005,shape=as.factor(qs)),
+    color = "#9E1946",
+    size = 3
+  ) +
+  geom_point(
+    data = df_q,
+    aes(x = x_us, y = -0.005,shape=as.factor(qs)),
+    color = "#4D6CFA",
+    size = 3
+  ) +
+  geom_curve(
+    data = df_q,
+    aes(
+      x = x_japan+0.3, y = -0.006,
+      xend = x_us-0.3, yend = -0.006
+    ),
+    curvature = 0.35,
+    linetype = "dashed",
+    arrow = arrow(length = unit(0.2, "cm"), type="closed"),
+    color = "grey4"
+  )  + ylim(c(-0.013, 0.1)) +
+  theme(legend.position = "null")
+  
+
+#HEIGHT
+mean_height<-170
+sd_height<-5
+
+height_plot<-ggplot() +
+  xlim(c(120,200)) +
+  stat_function(
+    fun = function(x) dnorm(x, mean = mean_height, sd = sd_height),
+    color = "darkgreen",
+    linewidth = 1.2,
+    n = 500
+  ) +
+  labs(
+    x = "Height (cm)",
+    y = "Density"
+  ) +
+  theme_minimal()
+
+#Simulate biomass dist
+n <- 1000000
+height <- rnorm(n, mean_height, sd_height)
+
+bmi_japan <-rnorm(n, mean = meanbmi_japan,sd = sigma1_japan)
+mass_japan <- bmi_japan * ((height/100)^2+(sd_height/100)^2)
+
+bmi_US <-rnorm(n, mean = meanbmi_US,sd = sigma1_US)
+mass_US <- bmi_US * ((height/100)^2+(sd_height/100)^2)
+
+df <- data.frame(
+  mass = c(mass_japan, mass_US),
+  country = rep(c("Group 1", "Group 2"),
+                times = c(length(mass_japan), length(mass_US)))
+)
+
+equivalent_mass <- function(x, jp, us) {
+  p <- mean(jp <= x)
+  quantile(us, probs = p)
+}
+
+equivalent_mass(50, mass_japan, mass_US)
+equivalent_mass(75, mass_japan, mass_US)
+equivalent_mass(100, mass_japan, mass_US)
+
+
+df_q$x_japan_mass<-df_q$x_japan*((mean_height/100)^2+(sd_height/100)^2)
+df_q$x_US_mass<-df_q$x_us*((mean_height/100)^2+(sd_height/100)^2)
+
+mass_plot<-ggplot(df, aes(x = mass, color = country)) +
+  geom_vline(xintercept=25*(1.7^2+0.05^2),color="grey30", linetype="dotted") +
+  geom_vline(xintercept=30*(1.7^2+0.05^2),color="grey30", linetype="dotted") +
+  ylim(c(-0.003,0.03))+
+  geom_density(linewidth=1) +
+  labs(x = "Mass (kg)", y = "Density") +
+  theme_minimal()  +xlim(c(0, 130))  +
+  scale_color_manual(
+    name = "Country age-sex group",
+    values = c(
+      "Group 1" = "#9E1946",
+      "Group 2" = "#4D6CFA"
+    )
+  ) +theme(
+    legend.position = "none") +
+  geom_point(
+    data = df_q,
+    aes(x = x_japan_mass, y = -0.0008,shape=as.factor(qs)),
+    color = "#9E1946",
+    size = 3
+  ) +
+  geom_point(
+    data = df_q,
+    aes(x = x_US_mass, y = -0.0008,shape=as.factor(qs)),
+    color = "#4D6CFA",
+    size = 3
+  ) +
+  geom_curve(
+    data = df_q,
+    aes(
+      x = x_japan_mass+1, y = -0.0009,
+      xend = x_US_mass-1, yend = -0.0009
+    ),
+    curvature = 0.35,
+    linetype = "dashed",
+    arrow = arrow(length = unit(0.2, "cm"), type="closed"),
+    color = "grey4"
+  )  
+
+
+#CDF for Mass
+x_grid <- seq(min(df$mass), max(df$mass), length.out = 1000)
+ecdf_japan <- ecdf(mass_japan)
+ecdf_us <- ecdf(mass_US)
+df_ecdf <- data.frame(
+  x = x_grid,
+  F_japan = ecdf_japan(x_grid),
+  F_us = ecdf_us(x_grid)
+)
+
+df_inv <- data.frame(
+  y = df_ecdf$F_japan,
+  x = df_ecdf$x
+)
+
+
+
+cdf_plot<-ggplot() +
+  geom_line(aes(x=df_ecdf$x,y = df_ecdf$F_japan, color = "Japan: 30-44 years, male"), linewidth = 1.2) +
+  geom_line(aes(x=df_ecdf$x,y = df_ecdf$F_us, color = "US: 30-44 years, male"), linewidth = 1.2) +
+  scale_color_manual(name = "Country age-sex group",
+                     values = c(
+                       "Japan: 30-44 years, male" = "#9E1946",
+                       "US: 30-44 years, male" = "#4D6CFA"
+                     )) +
+  
+  labs(x = "Mass (kg)", y = "Cumulative density") +geom_point(
+    data = df_q,
+    aes(x = x_japan_mass-0.6, y = df_q$q,shape=as.factor(qs)), #there is slight error so I have jittered the points as this is just a picture example
+    color = "#9E1946",
+    size = 4
+  ) +
+  geom_point(
+    data = df_q,
+    aes(x = x_US_mass, y = df_q$q,shape=as.factor(qs)),
+    color = "#4D6CFA",
+    size = 4
+  )+theme_minimal() + geom_vline(xintercept=25*1.7^2,color="grey30", linetype="dotted") +
+  geom_vline(xintercept=30*1.7^2,color="grey30", linetype="dotted") + xlim(c(0,130))+
+  theme(legend.position = "null") +
+  geom_segment(
+    data = df_q,
+    aes(x = x_japan_mass+1, y = q,
+        xend = x_US_mass-1.5, yend = q),
+    color = "grey4",
+    linetype="dashed",
+    arrow = arrow(length = unit(0.2, "cm"), type="closed")
+  )
+  
+
+t25 <- 25 * (1.7^2+0.05^2)
+t30 <- 30 * (1.7^2+0.05^2)
+df_low  <- df_ecdf[df_ecdf$x <= t25, ]
+df_mid  <- df_ecdf[df_ecdf$x > t25 & df_ecdf$x <= t30, ]
+df_high <- df_ecdf[df_ecdf$x > t30, ]
+x_low  <- mean(df_low$x)
+x_mid  <- mean(df_mid$x)
+x_high <- mean(df_high$x)
+mid_y_between <- function(x0, df) {
+  row <- df[which.min(abs(df$x - x0)), ]
+  mean(c(row$F_japan, row$F_us))
+}
+
+mid_y_above <- function(x0, df) {
+  row <- df[which.min(abs(df$x - x0)), ]
+  mean(c(row$F_japan, 1))
+}
+labels_df <- data.frame(
+  x = c(x_low, x_mid, x_high, x_low, x_mid, x_high),
+  y = c(
+    mid_y_above(x_low, df_low),
+    mid_y_above(x_mid, df_mid),
+    mid_y_above(x_high, df_high),
+    mid_y_between(x_low, df_low),
+    mid_y_between(x_mid, df_mid),
+    mid_y_between(x_high, df_high)
+  ),
+  label = c("A", "B", "C", "X", "Y", "Z")
+)
+labels_df$x[labels_df$label == "X"] <- 60
+labels_df$y[labels_df$label == "X"] <- 0.25
+
+labels_df$x[labels_df$label == "Z"] <- 95
+labels_df$y[labels_df$label == "Z"] <- 0.9
+
+labels_df$y[labels_df$label == "B"] <- 0.97
+
+labels_df$x[labels_df$label == "C"] <- 97
+labels_df$y[labels_df$label == "C"] <- 1.05
+
+cdf_plot_areas<-ggplot() +
+  geom_ribbon(data = df_low,
+              aes(x = x, ymin = F_japan, ymax = 1),
+              fill = "#4D6CFA", alpha = 0.15) +
+  
+  geom_ribbon(data = df_mid,
+              aes(x = x, ymin = F_japan, ymax = 1),
+              fill = "#4D6CFA", alpha = 0.3) +
+  
+  geom_ribbon(data = df_high,
+              aes(x = x, ymin = F_japan, ymax = 1),
+              fill = "#4D6CFA", alpha = 0.6) +
+  # --- ABOVE RED (Japan) ---
+  geom_ribbon(data = df_low,
+              aes(x = x, ymin = F_japan, ymax = 1),
+              fill = "#9E1946", alpha = 0.15) +
+  
+  geom_ribbon(data = df_mid,
+              aes(x = x, ymin = F_japan, ymax = 1),
+              fill = "#9E1946", alpha = 0.3) +
+  
+  geom_ribbon(data = df_high,
+              aes(x = x, ymin = F_japan, ymax = 1),
+              fill = "#9E1946", alpha = 0.6) +
+  
+  # --- BETWEEN CURVES ---
+  geom_ribbon(data = df_low,
+              aes(x = x,
+                  ymin = pmin(F_japan, F_us),
+                  ymax = pmax(F_japan, F_us)),
+              fill = "#4D6CFA", alpha = 0.15) +
+  
+  geom_ribbon(data = df_mid,
+              aes(x = x,
+                  ymin = pmin(F_japan, F_us),
+                  ymax = pmax(F_japan, F_us)),
+              fill = "#4D6CFA", alpha = 0.3) +
+  
+  geom_ribbon(data = df_high,
+              aes(x = x,
+                  ymin = pmin(F_japan, F_us),
+                  ymax = pmax(F_japan, F_us)),
+              fill = "#4D6CFA", alpha = 0.6) +
+  geom_line(aes(x=df_ecdf$x,y = df_ecdf$F_japan, color = "Japan: 30-44 years, male"), linewidth = 1.2) +
+  geom_line(aes(x=df_ecdf$x,y = df_ecdf$F_us, color = "US: 30-44 years, male"), linewidth = 1.2) +
+  scale_color_manual(name = "Country age-sex group",
+                     values = c(
+                       "Japan: 30-44 years, male" = "#9E1946",
+                       "US: 30-44 years, male" = "#4D6CFA"
+                     )) +
+  
+  labs(x = "Mass (kg)", y = "Cumulative population") +
+  scale_y_continuous(limits=c(0,1.1), breaks=c(0,0.25,0.5,0.75,1), labels=c("0","2.5 mil","5 mil","7.5 mil", "1 mil"))+
+  theme_minimal() + geom_vline(xintercept=25*1.7^2,color="grey30", linetype="dotted") +
+  geom_vline(xintercept=30*1.7^2,color="grey30", linetype="dotted") + xlim(c(0,130))+
+  theme(legend.position = "null") +
+  geom_text(
+    data = labels_df,
+    aes(x = x, y = y, label = label),
+    fontface = "bold",
+    size = 5
+  )+
+  geom_segment(
+    data = df_q,
+    aes(x = 95, y = 1.035,
+        xend = 90, yend = 0.995),
+    color = "grey4",
+    linetype="solid",
+    arrow = arrow(length = unit(0.1, "cm"), type="closed")
+  )
+
+
+library(gridExtra)
+library(grid)
+
+table_df <- data.frame(
+  Category = c("Optimal", "Current", "Excess"),
+  `Total biomass` = c("A+B+C", "A+B+C+X+Y+Z", "X+Y+Z"),
+  `Biomass due to overweight` = c("B+C", "B+C+Y+Z", "Y+Z"),
+  `Biomass due to obesity` = c("C", "C+Z", "Z")
+)
+
+colnames(table_df) <- c(
+  "",
+  "Total biomass",
+  "Biomass due to\noverweight",
+  "Biomass due to\nobesity"
+)
+
+table_grob <-  tableGrob(
+  table_df,
+  rows = NULL,
+  theme = ttheme_minimal(
+    core = list(
+      fg_params = list(col = "black"),
+      bg_params = list(fill = NA, col = "black", lwd = 1)
+    ),
+    colhead = list(
+      fg_params = list(fontface = "bold"),
+      bg_params = list(fill = NA, col = "black", lwd = 1)
+    )
+  )
+)
+# Population 1 (row 2) → red
+table_grob$grobs[table_grob$layout$t == 2] <- lapply(
+  table_grob$grobs[table_grob$layout$t == 2],
+  function(g) {
+    g$gp$fill <- scales::alpha("#9E1946", 0.4)
+    g
+  }
+)
+
+# Excess (row 4) → blue
+table_grob$grobs[table_grob$layout$t == 3] <- lapply(
+  table_grob$grobs[table_grob$layout$t == 3],
+  function(g) {
+    g$gp$fill <- scales::alpha("#4D6CFA", 0.4)
+    g
+  }
+)
+first_col <- table_grob$layout$l == 1
+
+table_grob$grobs[first_col] <- lapply(
+  table_grob$grobs[first_col],
+  function(g) {
+    g$gp$font <- NULL
+    g$gp$fontface <- "bold"
+    g
+  }
+)
+bottom_row <- max(table_grob$layout$t)
+idx <- table_grob$layout$t == bottom_row &
+  table_grob$layout$name == "core-fg"
+
+table_grob$grobs[idx] <- lapply(
+  table_grob$grobs[idx],
+  function(g) {
+    g$gp$font <- NULL          # avoid conflict with fontface
+    g$gp$fontface <- "bold"
+    g
+  }
+)
+grid.newpage()
+grid.draw(table_grob)
+
+
+
+
+bmi_plot <- bmi_plot +
+  theme(
+    panel.border = element_rect(color = "grey40", fill = NA, linewidth = 0.5)
+  )
+
+height_plot <- height_plot +
+  theme(
+    panel.border = element_rect(color = "grey40", fill = NA, linewidth = 0.5)
+  )
+
+mass_plot <- mass_plot +
+  theme(
+    panel.border = element_rect(color = "grey40", fill = NA, linewidth = 0.5)
+  )
+
+cdf_plot <- cdf_plot +
+  theme(
+    panel.border = element_rect(color = "grey40", fill = NA, linewidth = 0.5)
+  )
+
+cdf_plot_areas <- cdf_plot_areas +
+  theme(
+    panel.border = element_rect(color = "grey40", fill = NA, linewidth = 0.5)
+  )
+
+library(patchwork)
+left_col <- bmi_plot / mass_plot / cdf_plot
+right_col <- cdf_plot_areas / wrap_elements(table_grob)
+right_col <- cdf_plot_areas / wrap_elements(table_grob) +
+  plot_layout(heights = c(2.5, 1))
+
+final_plot <- left_col | plot_spacer() | right_col
+final_plot +
+  plot_layout(widths = c(1, 0.1, 1.6))
+
+png("/Users/issylandray/Library/CloudStorage/OneDrive-Personal/Documents/UAH/Weightofnations/Code/Code_analysis2022/Output/Demonstrateshift.png",width=12,height=7, units = "in", res = 300)
+final_plot +
+  plot_layout(widths = c(1, 0.1, 1.6))
+dev.off()
+# 
+
+
+df_ecdf$diff <- abs(df_ecdf$F_us - df_ecdf$F_japan)
+df_ecdf$dx <- c(diff(df_ecdf$x), NA)
+df_X <- df_ecdf[df_ecdf$x <= t25, ]
+df_Y <- df_ecdf[df_ecdf$x > t25 & df_ecdf$x <= t30, ]
+df_Z <- df_ecdf[df_ecdf$x > t30, ]
+area_X <- sum(df_X$diff * df_X$dx, na.rm = TRUE)
+area_Y <- sum(df_Y$diff * df_Y$dx, na.rm = TRUE)
+area_Z <- sum(df_Z$diff * df_Z$dx, na.rm = TRUE)
+1-area_X/(area_X+area_Y+area_Z)
+
+
+df_ecdf$dx <- c(diff(df_ecdf$x), NA)
+
+df_A <- df_ecdf[df_ecdf$x <= t25, ]
+df_B <- df_ecdf[df_ecdf$x > t25 & df_ecdf$x <= t30, ]
+df_C <- df_ecdf[df_ecdf$x > t30, ]
+
+area_A <- sum((1 - df_A$F_japan) * df_A$dx, na.rm = TRUE)
+area_B <- sum((1 - df_B$F_japan) * df_B$dx, na.rm = TRUE)
+area_C <- sum((1 - df_C$F_japan) * df_C$dx, na.rm = TRUE)
+
+
+area_A+area_B+area_C
+area_B+area_C
+area_C
+area_A+area_B+area_C+area_X+area_Y+area_Z
+area_B+area_C+area_Y+area_Z
+area_C+area_Z
+area_X+area_Y+area_Z
+area_Y+area_Z
+area_Z
+```
+
+## Supplementary Table 1: dataset with param estimates by age-sex-country group
+
+```{r}
+dta<-DF_ADULT_bayesmod_japan %>% full_join(DF_ADULT_bayesmod_USA)
+head(dta)
+
+dta$averagebodymass<- dta$`22biotot`/dta$TOTPOP
+dta$averagebodymass_japan<- dta$`22biotot_JAPAN`/dta$TOTPOP
+dta$averagebodymass_USA<- dta$`22biotot_USA`/dta$TOTPOP
+table<-dta %>% dplyr::select(name, SEX, heightagegroups, TOTPOP, pivot, sigma1, sigma2, meanheight, sdheight, `22biotot`, averagebodymass, `22biotot_JAPAN`, averagebodymass_japan,`22biotot_USA`, averagebodymass_USA) %>% 
+  dplyr::arrange(name, SEX, heightagegroups) %>% 
+  dplyr::rename( Country = name, Sex = SEX, `Age group (years)` = heightagegroups, `Total Population (millions)` = TOTPOP, `BMI distribution pivot estimate` = pivot, `BMI distribution SD1 estimate (left-side SD)` = sigma1, `BMI distribution SD2 estimate (right-side SD)` = sigma2, `Mean Height` = meanheight, `Height SD` = sdheight, `Current total biomass (million kg)` = `22biotot`,`Current mean body mass (kg)` =averagebodymass, `Lowest scenario total biomass (million kg)`=`22biotot_JAPAN`, `Lowest scenario mean body mass (kg)`=averagebodymass_japan, `Highest scenario total biomass (million kg)`=`22biotot_USA`, `Highest scenario mean body mass (kg)`=averagebodymass_USA)
+
+table$Sex <- if_else(table$Sex==0,"Women","Men")
+
+177*2*6
+
+saveRDS(table, "Output/Supplementary_Table1_resultsbycountryagesexgroup_17Jun.rds")
+```
